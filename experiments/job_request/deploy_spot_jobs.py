@@ -120,8 +120,8 @@ def main():
             if not args.dry_run:
                 time.sleep(wait_real_sec)
 
-        # Job 배포
-        job_id = f"spot-{int(time.time() * 1000)}"
+        # Job 배포 (CSV의 job_name 사용)
+        job_id = f"spot-{row['job_name']}"
         mig_size = int(row['mig_size'])
         duration_min = row['duration'] / 60
 
