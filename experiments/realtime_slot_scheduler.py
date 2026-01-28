@@ -1212,8 +1212,15 @@ class RealTimeSlotScheduler(Simulator):
             print(f"    new_req ({new_req}g) should be > old_req ({old_req}g) for scale-up")
             return
 
-        # 1. 기존 job undeploy
-        print(f"    Step 1: Undeploy existing job {target_job_id}")
+        # 1. remaining_duration 업데이트 (이미 실행된 시간 차감)
+        if target_job_id in self.job_states and running_job.start_time is not None:
+            state = self.job_states[target_job_id]
+            elapsed_min = (self.current_time - running_job.start_time) / 60
+            state.remaining_duration = max(0, state.remaining_duration - elapsed_min)
+            print(f"    Elapsed: {elapsed_min:.1f}min, Remaining: {state.remaining_duration:.1f}min")
+
+        # 2. 기존 job undeploy
+        print(f"    Step 2: Undeploy existing job {target_job_id}")
         if node:
             node.deallocate_job(running_job)
             del self.job_to_node[target_job_id]
@@ -1280,8 +1287,15 @@ class RealTimeSlotScheduler(Simulator):
             print(f"    new_req ({new_req}g) should be < old_req ({old_req}g) for scale-down")
             return
 
-        # 1. 기존 job undeploy
-        print(f"    Step 1: Undeploy existing job {target_job_id}")
+        # 1. remaining_duration 업데이트 (이미 실행된 시간 차감)
+        if target_job_id in self.job_states and running_job.start_time is not None:
+            state = self.job_states[target_job_id]
+            elapsed_min = (self.current_time - running_job.start_time) / 60
+            state.remaining_duration = max(0, state.remaining_duration - elapsed_min)
+            print(f"    Elapsed: {elapsed_min:.1f}min, Remaining: {state.remaining_duration:.1f}min")
+
+        # 2. 기존 job undeploy
+        print(f"    Step 2: Undeploy existing job {target_job_id}")
         if node:
             node.deallocate_job(running_job)
             del self.job_to_node[target_job_id]
