@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KubeSMO - AI Job Submission</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        select, input[type="number"], input[type="text"] {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 15px;
+            transition: all 0.3s ease;
+            background-color: #f9f9f9;
+        }
+
+        select:focus, input:focus {
+            outline: none;
+            border-color: #667eea;
+            background-color: white;
+        }
+
+        select {
+            cursor: pointer;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23333' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 15px center;
+            padding-right: 40px;
+        }
+
+        .btn-submit {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            margin-top: 10px;
+        }
+
+        .btn-submit:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-submit:active {
+            transform: translateY(0);
+        }
+
+        .btn-submit:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .result {
+            margin-top: 25px;
+            padding: 15px;
+            border-radius: 8px;
+            display: none;
+        }
+
+        .result.success {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+
+        .result.error {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+
+        .result-title {
+            font-weight: 600;
+            margin-bottom: 8px;
+            font-size: 16px;
+        }
+
+        .result-content {
+            font-size: 14px;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            margin-top: 15px;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .info-badge {
+            display: inline-block;
+            background-color: #e7f3ff;
+            color: #0066cc;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            margin-left: 8px;
+            font-weight: 500;
+        }
+
+        .job-list {
+            margin-top: 30px;
+            padding-top: 30px;
+            border-top: 2px solid #e0e0e0;
+        }
+
+        .job-list h2 {
+            font-size: 20px;
+            margin-bottom: 15px;
+            color: #333;
+        }
+
+        .btn-refresh {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-bottom: 15px;
+        }
+
+        .btn-refresh:hover {
+            background: #218838;
+        }
+
+        .job-item {
+            background: #f9f9f9;
+            padding: 12px;
+            margin-bottom: 10px;
+            border-radius: 6px;
+            border-left: 4px solid #667eea;
+        }
+
+        .job-item strong {
+            color: #667eea;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 AI Job Submission</h1>
+        <p class="subtitle">KubeSMO - Kubernetes Scheduling and Management for AI Workloads</p>
+
+        <form id="jobForm">
+            <div class="form-group">
+                <label for="modelName">
+                    Model <span class="info-badge">Required</span>
+                </label>
+                <select id="modelName" name="name" required>
+                    <option value="">-- Select Model --</option>
+                    <option value="llama 1B">Llama 1B (3.2-1B-Instruct)</option>
+                    <option value="qwen 8B">Qwen 8B (Qwen3-8B)</option>
+                    <option value="qwen 14B">Qwen 14B (Qwen3-14B)</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="nodeName">
+                    Node Name <span class="info-badge">Optional</span>
+                </label>
+                <select id="nodeName" name="node_name">
+                    <option value="">Auto (Scheduler decides)</option>
+                    <option value="skt-6gtb-ars">skt-6gtb-ars</option>
+                    <option value="sys-221he-tnr">sys-221he-tnr</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="numSequence">
+                    Number of Sequences <span class="info-badge">Required</span>
+                </label>
+                <input
+                    type="number"
+                    id="numSequence"
+                    name="num_of_sequence"
+                    placeholder="e.g., 100000"
+                    min="1"
+                    value="100000"
+                    required
+                />
+            </div>
+
+            <div class="form-group">
+                <label for="quantization">
+                    Quantization <span class="info-badge">Required</span>
+                </label>
+                <select id="quantization" name="quantization" required>
+                    <option value="">-- Select Quantization --</option>
+                    <option value="FP16" selected>FP16</option>
+                    <option value="FP32">FP32</option>
+                    <option value="INT8">INT8</option>
+                    <option value="INT4">INT4</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="datasetPath">
+                    Dataset Path
+                </label>
+                <input
+                    type="text"
+                    id="datasetPath"
+                    name="dataset_path"
+                    placeholder="/data/sonnet.txt"
+                    value="/data/sonnet.txt"
+                />
+            </div>
+
+            <button type="submit" class="btn-submit" id="submitBtn">
+                Submit Job
+            </button>
+        </form>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p style="margin-top: 10px; color: #666;">Submitting job...</p>
+        </div>
+
+        <div class="result" id="result">
+            <div class="result-title" id="resultTitle"></div>
+            <div class="result-content" id="resultContent"></div>
+        </div>
+
+        <div class="job-list">
+            <h2>📋 Recent Jobs</h2>
+            <button class="btn-refresh" onclick="loadJobs()">🔄 Refresh</button>
+            <div id="jobsList"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE_URL = 'http://165.132.140.79:8000';
+
+        document.getElementById('jobForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const submitBtn = document.getElementById('submitBtn');
+            const loading = document.getElementById('loading');
+            const result = document.getElementById('result');
+
+            // Disable submit button
+            submitBtn.disabled = true;
+            loading.style.display = 'block';
+            result.style.display = 'none';
+
+            // Collect form data
+            const nodeNameValue = document.getElementById('nodeName').value;
+            const formData = {
+                name: document.getElementById('modelName').value,
+                type: "offline",
+                num_of_sequence: parseInt(document.getElementById('numSequence').value),
+                node_name: nodeNameValue || null,  // null if empty (Auto)
+                dataset_path: document.getElementById('datasetPath').value,
+                quantization: document.getElementById('quantization').value
+            };
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/ai/jobs`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(formData)
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    showResult('success', 'Job Submitted Successfully! ✅', JSON.stringify(data, null, 2));
+                    document.getElementById('jobForm').reset();
+                    // Refresh job list
+                    setTimeout(loadJobs, 1000);
+                } else {
+                    showResult('error', 'Failed to Submit Job ❌', JSON.stringify(data, null, 2));
+                }
+            } catch (error) {
+                showResult('error', 'Network Error ❌', error.message);
+            } finally {
+                submitBtn.disabled = false;
+                loading.style.display = 'none';
+            }
+        });
+
+        function showResult(type, title, content) {
+            const result = document.getElementById('result');
+            const resultTitle = document.getElementById('resultTitle');
+            const resultContent = document.getElementById('resultContent');
+
+            result.className = `result ${type}`;
+            result.style.display = 'block';
+            resultTitle.textContent = title;
+            resultContent.textContent = content;
+        }
+
+        // Load jobs on page load
+        async function loadJobs() {
+            const jobsList = document.getElementById('jobsList');
+            jobsList.innerHTML = '<p style="color: #666;">Loading...</p>';
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/ai/jobs`);
+                const data = await response.json();
+
+                if (response.ok && data.jobs && data.jobs.length > 0) {
+                    jobsList.innerHTML = data.jobs.slice(0, 5).map(job => `
+                        <div class="job-item">
+                            <strong>Job ID:</strong> ${job.id}<br>
+                            <strong>Name:</strong> ${job.name}<br>
+                            <strong>Node:</strong> ${job.node_name || 'Auto-scheduled'}<br>
+                            <strong>Status:</strong> ${job.status || 'Pending'}
+                        </div>
+                    `).join('');
+                } else {
+                    jobsList.innerHTML = '<p style="color: #666;">No jobs found</p>';
+                }
+            } catch (error) {
+                jobsList.innerHTML = '<p style="color: #dc3545;">Failed to load jobs</p>';
+            }
+        }
+
+        // Load jobs when page loads
+        loadJobs();
+    </script>
+</body>
+</html>
