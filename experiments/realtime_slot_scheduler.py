@@ -282,7 +282,7 @@ class RealTimeSlotScheduler(Simulator):
         # ========================================
         # Phase 1: Initial Planning (Plan이 없을 때)
         # ========================================
-        if node.current_plan is None and len(node.spot_waiting_queue) >= 2:
+        if node.current_plan is None and len(node.spot_waiting_queue) >= 3:
             available_profile = node.get_available_profile()
             jobs_for_ilp = node.get_jobs_for_ilp()
 
@@ -1474,9 +1474,16 @@ class RealTimeSlotScheduler(Simulator):
             node.spot_waiting_queue.append(job)
             print(f"      → Re-queued for later execution")
 
-        # 4. Job 상태 업데이트 (preemption 횟수 등)
+        # 4. Job 상태 업데이트 (preemption 횟수 및 실행 시간 누적)
         if hasattr(self, 'job_states') and job.job_id in self.job_states:
-            self.job_states[job.job_id].times_preempted += 1
+            state = self.job_states[job.job_id]
+            # 실행 시간 누적 (preempt 전까지 실행된 시간)
+            if state.actual_start_time is not None:
+                elapsed_min = (self.current_time - state.actual_start_time) / 60
+                state.total_run_time += elapsed_min
+            # actual_start_time 초기화 (다음 배포 시 새로 설정됨)
+            state.actual_start_time = None
+            state.times_preempted += 1
 
         # 5. Completion event 제거 필요!
         self._remove_completion_event(job.job_id)
