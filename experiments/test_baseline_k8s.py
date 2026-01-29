@@ -96,6 +96,7 @@ _TIMESTAMP = datetime.now().strftime('%Y%m%d_%H%M%S')
 
 # 결과 저장 경로 (타임스탬프 포함)
 RESULT_PATH = f'{RESULT_DIR}/results_baseline_k8s_{_TIMESTAMP}.json'
+CSV_RESULT_PATH = f'{RESULT_DIR}/results_baseline_k8s_{_TIMESTAMP}_jobs.csv'
 
 # 로그 파일 경로 (타임스탬프 포함)
 LOG_PATH = f'{RESULT_DIR}/test_baseline_k8s_{_TIMESTAMP}.log'
@@ -954,6 +955,78 @@ def save_results(metrics, hp_metrics, result_path):
     print(f"Results saved to: {result_path}")
 
 
+def save_jobs_csv(scheduler, csv_path):
+    """Per-job 결과를 CSV로 저장
+
+    논문용 5개 메트릭 (per-job):
+    1. jct_min: Job Completion Time (submit → completion, 분)
+    2. queueing_time_min: Job Queueing Time (submit → Running, 분)
+    3. completed: 완료 여부 (1/0)
+    4. progression_rate: 진행률 (%)
+    5. processed_time_min: 실제 처리 시간 (분)
+    """
+    current_wall = time.time()
+    rows = []
+    for job_id, state in scheduler.job_states.items():
+        wall_submit_time = scheduler.wall_start + (state.submit_time / scheduler.speed)
+
+        k8s_wait_sec = None
+        queueing_time_min = None
+        processed_time_min = 0.0
+        jct_min = None
+        progression_rate = 0.0
+        completed = 0
+        job_status = "pending"
+
+        if state.pod_running_time is not None:
+            k8s_wait_sec = state.pod_running_time - state.deploy_time
+            queueing_time_min = (state.pod_running_time - wall_submit_time) / 60
+
+            expected_end_time = state.pod_running_time + (state.duration_min * 60)
+            if current_wall >= expected_end_time:
+                # 완료
+                processed_time_min = state.duration_min
+                progression_rate = 100.0
+                jct_min = (expected_end_time - wall_submit_time) / 60
+                completed = 1
+                job_status = "completed"
+            else:
+                # 실행 중
+                processed_time_min = (current_wall - state.pod_running_time) / 60
+                progression_rate = min(100.0, (processed_time_min / state.duration_min) * 100) if state.duration_min > 0 else 0.0
+                job_status = "running"
+        elif state.deploy_time is not None:
+            # Pending (K8s 스케줄러 대기 중)
+            queueing_time_min = (current_wall - wall_submit_time) / 60
+            job_status = "pending"
+
+        rows.append({
+            'job_id': state.job_id,
+            'job_type': state.job_type,
+            'mig_size': state.mig_size,
+            'duration_min': state.duration_min,
+            'submit_time': state.submit_time,
+            'pod_name': state.pod_name,
+            'node_name': state.node_name,
+            'gpu_resource': state.gpu_resource,
+            'status': job_status,
+            'completed': completed,
+            # 논문 메트릭 5개
+            'jct_min': round(jct_min, 4) if jct_min is not None else None,
+            'queueing_time_min': round(queueing_time_min, 4) if queueing_time_min is not None else None,
+            'progression_rate': round(progression_rate, 2),
+            'processed_time_min': round(processed_time_min, 4),
+            'k8s_wait_sec': round(k8s_wait_sec, 4) if k8s_wait_sec is not None else None,
+        })
+
+    df = pd.DataFrame(rows)
+    df.to_csv(csv_path, index=False)
+    print(f"Jobs CSV saved to: {csv_path}")
+    print(f"  Total: {len(rows)}, Completed: {sum(r['completed'] for r in rows)}, "
+          f"Running: {sum(1 for r in rows if r['status'] == 'running')}, "
+          f"Pending: {sum(1 for r in rows if r['status'] == 'pending')}")
+
+
 def save_paper_results(scheduler, result_path):
     """
     논문용 5개 메트릭 결과를 JSON 파일로 저장
@@ -1004,6 +1077,7 @@ def save_on_interrupt(scheduler, logger):
 
         save_results(metrics, hp_metrics, RESULT_PATH)
         save_paper_results(scheduler, RESULT_PATH.replace('.json', '_paper.json'))
+        save_jobs_csv(scheduler, CSV_RESULT_PATH)
 
         logger.info("Results saved successfully!")
     except Exception as e:
@@ -1082,6 +1156,7 @@ def main():
         # 결과 저장 (Legacy + Paper metrics)
         save_results(metrics, hp_metrics, RESULT_PATH)
         save_paper_results(scheduler, RESULT_PATH.replace('.json', '_paper.json'))
+        save_jobs_csv(scheduler, CSV_RESULT_PATH)
 
         logger.info("")
         logger.info("=" * 60)
