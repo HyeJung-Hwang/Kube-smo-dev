@@ -7,6 +7,9 @@ import subprocess
 import time
 import os
 
+from job import Job, RANJob
+from experiments.job import GPUNode
+
 # MIG Profile ID mapping (nvidia-smi)
 MIG_PROFILE_IDS = {
     "1g": 19,  # MIG 1g.12gb
@@ -165,119 +168,38 @@ def get_mig_instance_uuids(node_name: str, gpu_index: int, max_retries: int = 3)
     # 모든 재시도 실패
     return []
 
-
-def deploy_job(job_id: str, node_name: str, gpu_g: int, gpu_index: int = 0, slice_index: int = None, avoid_uuids: list = None):
+def deploy_job(job: Job, node_name: str, gpu_g: int, gpu_index: int = 0,
+               slice_index: int = None, avoid_uuids: list = None,
+               launch_pattern: str = "F08 1C 59", cell_group_num: int = 1):
     """
-    Job 배포 (Multi-GPU 지원)
+    Job 배포 (Multi-GPU 지원, RAN/AI 자동 분기)
 
     Args:
-        job_id: Job ID
+        job: Job 객체 (RANJob이면 RAN CLI, 아니면 AI CLI)
         node_name: 노드 이름
         gpu_g: GPU 크기 (1, 2, 3, 4, 7)
         gpu_index: GPU index (0, 1, ...)
-        slice_index: MIG slice index (GPUNode.slices의 index) - 힌트용, avoid_uuids와 함께 사용
+        slice_index: MIG slice index (GPUNode.slices의 index)
         avoid_uuids: 피해야 할 UUID 리스트 (HP job이 사용 중인 UUID들)
+        launch_pattern: RAN launch pattern (RAN job 전용)
+        cell_group_num: Cell group number (RAN job 전용)
 
     Returns:
         mig_uuid: 배포된 MIG UUID (성공 시), None (실패 시)
     """
-    release = f"test-{job_id}".lower().replace("_", "-")
-    gpu_resource = get_gpu_resource(gpu_g)
+    job_id = job.job_id
+    is_ran = isinstance(job, RANJob)
 
-    # Get absolute path to repo root (experiments/../)
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    repo_root = os.path.dirname(script_dir)
-    helm_chart = os.path.join(repo_root, "workload", "vllm-server")
-
-    # MIG 인스턴스 UUID 가져오기
-    mig_uuids = get_mig_instance_uuids(node_name, gpu_index)
-    if not mig_uuids:
-        print(f" Failed to get MIG instance UUIDs for {node_name} GPU {gpu_index}")
-        return None
-
-    #  단순화: slice_index 우선, avoid_uuids는 충돌 체크용
-    if slice_index is not None and 0 <= slice_index < len(mig_uuids):
-        mig_uuid = mig_uuids[slice_index]
-        print(f"   Deploying to slice {slice_index} (MIG UUID: {mig_uuid})")
-
-        # avoid_uuids에 있으면 충돌 (이 슬롯은 HP가 사용 중)
-        if avoid_uuids and mig_uuid in avoid_uuids:
-            print(f"    Conflict: slice {slice_index} UUID {mig_uuid} is in avoid list")
-            print(f"    Trying to find alternative UUID...")
-            # 대안: avoid 목록에 없는 다른 UUID 찾기
-            available_uuids = [uuid for uuid in mig_uuids if uuid not in avoid_uuids]
-            if available_uuids:
-                mig_uuid = available_uuids[0]
-                print(f"    Selected alternative UUID: {mig_uuid}")
-            else:
-                print(f"    No available MIG UUID (all in avoid list)")
-                return None
-    elif avoid_uuids:
-        # slice_index 없고 avoid_uuids만 있는 경우 (fallback)
-        available_uuids = [uuid for uuid in mig_uuids if uuid not in avoid_uuids]
-        print(f"   No slice_index, selecting from available UUIDs: {len(available_uuids)} / {len(mig_uuids)}")
-        if available_uuids:
-            mig_uuid = available_uuids[0]
-            print(f"   Selected UUID: {mig_uuid} (avoiding: {avoid_uuids})")
-        else:
-            print(f"    No available MIG UUID")
-            return None
+    if is_ran:
+        node_name = "skt-6gtb-ars"
+        release = f"aerial-l1-{job_id}".lower().replace("_", "-")
     else:
-        # Slice index도 없고 avoid_uuids도 없으면 첫 번째 UUID 사용
-        mig_uuid = mig_uuids[0]
-        print(f"    No slice_index, using first MIG instance (UUID: {mig_uuid})")
+        release = f"test-{job_id}".lower().replace("_", "-")
 
-    cmd = [
-        "helm", "install", release, helm_chart,
-        "--set", f"nodeName={node_name}",
-        "--set", f"gpuResource={gpu_resource}",
-        "--set", "server.modelPath=/root/.cache/huggingface/hub/models--meta-llama--Llama-3.2-3B-Instruct",
-        "--set-string", "secret.hfApiToken=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",
-        "--set", f"gpuId={mig_uuid}"
-    ]
-
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        if result.returncode == 0:
-            print(f" Deployed {release} on {node_name} GPU {gpu_index} slice {slice_index} (MIG UUID: {mig_uuid})")
-            return mig_uuid  # Return UUID on success
-        else:
-            print(f" Deploy failed: {result.stderr}")
-            return None  # Return None on failure
-    except Exception as e:
-        print(f" Deploy error: {e}")
-        return None  # Return None on error
-
-
-def deploy_ran_job(job_id: str, node_name: str, gpu_g: int, gpu_index: int = 0,
-                   slice_index: int = None, avoid_uuids: list = None, launch_pattern: str = "F08 1C 59",
-                   cell_group_num: int = 1):
-    """
-    RAN Job 배포 (aerial-l1 helm chart 사용)
-
-    Args:
-        job_id: Job ID
-        node_name: 노드 이름 (RAN은 항상 skt-6gtb-ars에 배포)
-        gpu_g: GPU 크기 (1, 2, 3, 4, 7)
-        gpu_index: GPU index (0, 1, ...)
-        slice_index: MIG slice index
-        avoid_uuids: 피해야 할 UUID 리스트
-        launch_pattern: RAN launch pattern (default: "F08 1C 59")
-        cell_group_num: Cell group number (default: 1, scale-up: 2)
-
-    Returns:
-        mig_uuid: 배포된 MIG UUID (성공 시), None (실패 시)
-    """
-    # RAN은 항상 skt-6gtb-ars 노드에 배포
-    node_name = "skt-6gtb-ars"
-
-    release = f"aerial-l1-{job_id}".lower().replace("_", "-")
     gpu_resource = get_gpu_resource(gpu_g)
 
-    # Get absolute path to repo root (experiments/../)
     script_dir = os.path.dirname(os.path.abspath(__file__))
     repo_root = os.path.dirname(script_dir)
-    helm_chart = os.path.join(repo_root, "workload", "aerial-l1")
 
     # MIG 인스턴스 UUID 가져오기
     mig_uuids = get_mig_instance_uuids(node_name, gpu_index)
@@ -288,7 +210,7 @@ def deploy_ran_job(job_id: str, node_name: str, gpu_g: int, gpu_index: int = 0,
     # slice_index 우선, avoid_uuids는 충돌 체크용
     if slice_index is not None and 0 <= slice_index < len(mig_uuids):
         mig_uuid = mig_uuids[slice_index]
-        print(f"   [RAN] Deploying to slice {slice_index} (MIG UUID: {mig_uuid})")
+        print(f"   Deploying to slice {slice_index} (MIG UUID: {mig_uuid})")
 
         if avoid_uuids and mig_uuid in avoid_uuids:
             print(f"    Conflict: slice {slice_index} UUID {mig_uuid} is in avoid list")
@@ -301,36 +223,50 @@ def deploy_ran_job(job_id: str, node_name: str, gpu_g: int, gpu_index: int = 0,
                 return None
     elif avoid_uuids:
         available_uuids = [uuid for uuid in mig_uuids if uuid not in avoid_uuids]
-        print(f"   [RAN] No slice_index, selecting from available UUIDs: {len(available_uuids)} / {len(mig_uuids)}")
+        print(f"   No slice_index, selecting from available UUIDs: {len(available_uuids)} / {len(mig_uuids)}")
         if available_uuids:
             mig_uuid = available_uuids[0]
-            print(f"   Selected UUID: {mig_uuid}")
+            print(f"   Selected UUID: {mig_uuid} (avoiding: {avoid_uuids})")
         else:
             print(f"    No available MIG UUID")
             return None
     else:
         mig_uuid = mig_uuids[0]
-        print(f"    [RAN] No slice_index, using first MIG instance (UUID: {mig_uuid})")
+        print(f"    No slice_index, using first MIG instance (UUID: {mig_uuid})")
 
-    cmd = [
-        "helm", "install", release, helm_chart,
-        "--set", f"nodeName={node_name}",
-        "--set", f"gpuResource={gpu_resource}",
-        "--set", f"launchPattern={launch_pattern}",
-        "--set", f"cell_group_num={cell_group_num}"
-    ]
+    # RAN / AI 분기
+    if is_ran:
+        helm_chart = os.path.join(repo_root, "workload", "aerial-l1")
+        cmd = [
+            "helm", "install", release, helm_chart,
+            "--set", f"nodeName={node_name}",
+            "--set", f"gpuResource={gpu_resource}",
+            "--set", f"launchPattern={launch_pattern}",
+            "--set", f"cell_group_num={cell_group_num}"
+        ]
+    else:
+        helm_chart = os.path.join(repo_root, "workload", "vllm-server")
+        cmd = [
+            "helm", "install", release, helm_chart,
+            "--set", f"nodeName={node_name}",
+            "--set", f"gpuResource={gpu_resource}",
+            "--set", "server.modelPath=/root/.cache/huggingface/hub/models--meta-llama--Llama-3.2-3B-Instruct",
+            "--set-string", "secret.hfApiToken=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",
+            "--set", f"gpuId={mig_uuid}"
+        ]
 
+    tag = "[RAN]" if is_ran else "[AI]"
     try:
-        print(f"   [RAN] Running: {' '.join(cmd)}")
+        print(f"   {tag} Running: {' '.join(cmd)}")
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         if result.returncode == 0:
-            print(f" [RAN] Deployed {release} on {node_name} GPU {gpu_index} slice {slice_index} (MIG UUID: {mig_uuid})")
+            print(f" {tag} Deployed {release} on {node_name} GPU {gpu_index} slice {slice_index} (MIG UUID: {mig_uuid})")
             return mig_uuid
         else:
-            print(f" [RAN] Deploy failed: {result.stderr}")
+            print(f" {tag} Deploy failed: {result.stderr}")
             return None
     except Exception as e:
-        print(f" [RAN] Deploy error: {e}")
+        print(f" {tag} Deploy error: {e}")
         return None
 
 

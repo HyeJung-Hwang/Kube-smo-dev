@@ -14,13 +14,13 @@ class Job:
     """Job 정의"""
     job_id: str
     name: str
-    job_type: str  # HP, Spot, HP-scale-out, HP-scale-in, HP-scale-up, HP-scale-down
+    job_type: str  # 논문 HP, Spot, HP-scale-out, HP-scale-in, HP-scale-up, HP-scale-down // # 시연용 deploy, scale-out , scale-in, migration
     req: int  # GPU 크기 (1, 2, 3, 7) 또는 scale delta (+1, -1)
     duration: float  # 실행 시간 (분) - scale-out/in의 경우 무시됨
     submit_time: float  # 제출 시간 (초)
 
     # Workload 타입 (HP job용)
-    workload_type: str = "AI"  # AI, RAN (HP job에서만 사용)
+    workload_type: str = "AI"  # AI, RAN 
 
     # Scale 관련 (scale-out/scale-in용)
     target_job_id: Optional[str] = None  # scale 대상이 되는 원본 job ID
@@ -33,6 +33,9 @@ class Job:
     mig_uuid: Optional[str] = None  # 배포된 MIG 인스턴스 UUID
     allocated_size: Optional[int] = None  # 실제 할당된 슬라이스 크기 (req와 다를 수 있음)
 
+    ## Binpacking Schefuler에 만 필요
+    source_node: GPUNode
+
     def jct(self) -> float:
         """Job Completion Time (초)"""
         if self.end_time is None or self.submit_time is None:
@@ -44,6 +47,15 @@ class Job:
         if self.start_time is None or self.submit_time is None:
             return 0.0
         return self.start_time - self.submit_time
+
+@dataclass
+class RANJob(Job):
+    """RAN Job 정의 (Job 상속)"""
+    cell_id: str = "" 
+    band: str = ""    
+    bandwidth: int = 0
+    users: int = 0    
+
 
 @dataclass
 class Event:
@@ -67,17 +79,18 @@ class Event:
 class GPUNode:
     """GPU 노드 - MIG 슬라이스 기반 할당 (Multi-GPU 지원)"""
     name: str
-    mig_profile: str = "1111111"  # 기본: 1g × 7
+    # allocated_list: List[int]
+    mig_profile: str
     gpu_index: int = 0  # GPU index for nvidia-smi -i <index>
-    total_capacity: int = field(init=False)
+    # total_capacity: int = field(init=False)
     slices: List[Dict] = field(init=False)  # MIG 슬라이스 목록
-    current_plan: Optional[Dict] = None  # 현재 MIG 재구성 계획
-    current_slot: Optional[int] = None  # 현재 실행 중인 slot 번호
-    plan_start_time: Optional[float] = None  # Plan 시작 시간 (시뮬레이션 시간)
-    hp_waiting_queue: List[Job] = field(default_factory=list)  # HP job 대기 큐
-    spot_waiting_queue: List[Job] = field(default_factory=list)  # Spot
-    hp_running_jobs: List[Job] = field(default_factory=list)  # 실행 중인 HP job
-    spot_running_jobs: List[Job] = field(default_factory=list) # 실행
+    # current_plan: Optional[Dict] = None  # 현재 MIG 재구성 계획
+    # current_slot: Optional[int] = None  # 현재 실행 중인 slot 번호
+    # plan_start_time: Optional[float] = None  # Plan 시작 시간 (시뮬레이션 시간)
+    # hp_waiting_queue: List[Job] = field(default_factory=list)  # HP job 대기 큐
+    # spot_waiting_queue: List[Job] = field(default_factory=list)  # Spot
+    # hp_running_jobs: List[Job] = field(default_factory=list)  # 실행 중인 HP job
+    # spot_running_jobs: List[Job] = field(default_factory=list) # 실행
 
     def __post_init__(self):
         self.total_capacity = sum(int(c) for c in self.mig_profile)
@@ -94,6 +107,10 @@ class GPUNode:
                 'used': 0,
                 'jobs': []  # 할당된 job ID 리스트
             })
+    def get_free_slice_list(self) -> list:
+        # allcoated_list [ 3,0] <-> mig_profile_list [3,4]
+        free_size_list = [slice for slice in self.slices if slice["used"] ==0 ]
+        return free_size_list # [  {'id': 0, 'size': 3, 'used': 0, 'jobs': []},  {'id': 0, 'size': 3, 'used': 0, 'jobs': []} ]
 
     def get_capacity(self) -> int:
         """총 용량 반환"""
