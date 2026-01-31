@@ -7,8 +7,7 @@ import subprocess
 import time
 import os
 
-from job import Job, RANJob
-from experiments.job import GPUNode
+from job import Job, RANJob, GPUNode
 
 # MIG Profile ID mapping (nvidia-smi)
 MIG_PROFILE_IDS = {
@@ -86,7 +85,7 @@ def get_gpu_resource(gpu_g: int) -> str:
     return f"nvidia.com/mig-{gpu_g}g.{memory_map.get(gpu_g, '10gb')}"
 
 
-def get_mig_instance_uuids(node_name: str, gpu_index: int, max_retries: int = 3) -> list:
+def get_mig_instance_uuids(node_name: str, gpu_index: int, max_retries: int = 3, include_size: bool = False) -> list:
     """
     nvidia-smi -L로 GPU의 모든 MIG 인스턴스 UUID 가져오기
 
@@ -94,10 +93,13 @@ def get_mig_instance_uuids(node_name: str, gpu_index: int, max_retries: int = 3)
         node_name: 노드 이름
         gpu_index: GPU index (0, 1, ...)
         max_retries: 최대 재시도 횟수 (MIG reconfiguration 직후 대응)
+        include_size: True면 (size_g, uuid) 튜플 리스트 반환, False면 uuid만 반환
 
     Returns:
-        MIG 인스턴스 UUID 리스트 (Device index 순서대로)
-        예: ["MIG-xxx-0", "MIG-xxx-1", "MIG-xxx-2", ...]
+        include_size=False: MIG 인스턴스 UUID 리스트 (Device index 순서대로)
+            예: ["MIG-xxx-0", "MIG-xxx-1", "MIG-xxx-2", ...]
+        include_size=True: (size_g, uuid) 튜플 리스트 (Device index 순서대로)
+            예: [(2, "MIG-xxx-0"), (1, "MIG-xxx-1"), (1, "MIG-xxx-2")]
         실패 시 빈 리스트
 
     예시 출력:
@@ -124,7 +126,7 @@ def get_mig_instance_uuids(node_name: str, gpu_index: int, max_retries: int = 3)
         # Parse output
         # GPU 라인과 MIG 라인을 구분
         lines = output.split('\n')
-        mig_uuids = []
+        mig_entries = []  # (device_num, size_g, uuid)
         in_target_gpu = False
 
         for line in lines:
@@ -145,20 +147,28 @@ def get_mig_instance_uuids(node_name: str, gpu_index: int, max_retries: int = 3)
                 break
 
             # Target GPU의 MIG 인스턴스 라인
+            # 예: "  MIG 4g.48gb     Device  0: (UUID: MIG-45e9804a-...)"
             if in_target_gpu and "MIG" in line and "Device" in line and "UUID:" in line:
                 try:
                     device_str = line.split("Device")[1].split(":")[0].strip()
                     device_num = int(device_str)
                     uuid = line.split("UUID:")[1].strip().rstrip(")")
-                    mig_uuids.append((device_num, uuid))
+                    # MIG 크기 파싱: "MIG 4g.48gb" → 4
+                    mig_part = line.strip().split("Device")[0].strip()  # "MIG 4g.48gb"
+                    size_str = mig_part.split()[1]  # "4g.48gb"
+                    size_g = int(size_str.split("g")[0])  # 4
+                    mig_entries.append((device_num, size_g, uuid))
                 except (ValueError, IndexError):
                     continue
 
         # UUID를 찾았으면 반환
-        if mig_uuids:
-            # Device 번호 순으로 정렬하고 UUID만 반환
-            mig_uuids.sort(key=lambda x: x[0])
-            return [uuid for _, uuid in mig_uuids]
+        if mig_entries:
+            # Device 번호 순으로 정렬
+            mig_entries.sort(key=lambda x: x[0])
+            if include_size:
+                return [(size_g, uuid) for _, size_g, uuid in mig_entries]
+            else:
+                return [uuid for _, _, uuid in mig_entries]
 
         # UUID를 못 찾았으면 재시도
         if attempt < max_retries - 1:
@@ -169,74 +179,73 @@ def get_mig_instance_uuids(node_name: str, gpu_index: int, max_retries: int = 3)
     return []
 
 def deploy_job(job: Job, node_name: str, gpu_g: int, gpu_index: int = 0,
-               slice_index: int = None, avoid_uuids: list = None,
+               slice_index: int = None, size_index: int = 0, avoid_uuids: list = None,
                launch_pattern: str = "F08 1C 59", cell_group_num: int = 1):
-    """
-    Job 배포 (Multi-GPU 지원, RAN/AI 자동 분기)
 
-    Args:
-        job: Job 객체 (RANJob이면 RAN CLI, 아니면 AI CLI)
-        node_name: 노드 이름
-        gpu_g: GPU 크기 (1, 2, 3, 4, 7)
-        gpu_index: GPU index (0, 1, ...)
-        slice_index: MIG slice index (GPUNode.slices의 index)
-        avoid_uuids: 피해야 할 UUID 리스트 (HP job이 사용 중인 UUID들)
-        launch_pattern: RAN launch pattern (RAN job 전용)
-        cell_group_num: Cell group number (RAN job 전용)
-
-    Returns:
-        mig_uuid: 배포된 MIG UUID (성공 시), None (실패 시)
-    """
     job_id = job.job_id
     is_ran = isinstance(job, RANJob)
 
-    if is_ran:
-        node_name = "skt-6gtb-ars"
-        release = f"aerial-l1-{job_id}".lower().replace("_", "-")
-    else:
-        release = f"test-{job_id}".lower().replace("_", "-")
 
     gpu_resource = get_gpu_resource(gpu_g)
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     repo_root = os.path.dirname(script_dir)
 
-    # MIG 인스턴스 UUID 가져오기
-    mig_uuids = get_mig_instance_uuids(node_name, gpu_index)
-    if not mig_uuids:
+    # MIG 인스턴스 UUID 가져오기 (크기 정보 포함)
+    mig_info = get_mig_instance_uuids(node_name, gpu_index, include_size=True)
+    if not mig_info:
         print(f" Failed to get MIG instance UUIDs for {node_name} GPU {gpu_index}")
         return None
 
-    # slice_index 우선, avoid_uuids는 충돌 체크용
-    if slice_index is not None and 0 <= slice_index < len(mig_uuids):
-        mig_uuid = mig_uuids[slice_index]
-        print(f"   Deploying to slice {slice_index} (MIG UUID: {mig_uuid})")
+    # gpu_g 크기로 매칭 (nvidia-smi Device 순서 ≠ profile 문자열 순서)
+    matching_uuids = [uuid for sz, uuid in mig_info if sz == gpu_g]
+    all_uuids = [uuid for _, uuid in mig_info]
+    print(f"   MIG info: {[(sz, uuid[:20]+'...') for sz, uuid in mig_info]}")
+    print(f"   Looking for {gpu_g}g slice, found {len(matching_uuids)} match(es)")
 
-        if avoid_uuids and mig_uuid in avoid_uuids:
-            print(f"    Conflict: slice {slice_index} UUID {mig_uuid} is in avoid list")
-            available_uuids = [uuid for uuid in mig_uuids if uuid not in avoid_uuids]
-            if available_uuids:
-                mig_uuid = available_uuids[0]
-                print(f"    Selected alternative UUID: {mig_uuid}")
+    if matching_uuids:
+        # avoid_uuids 필터 적용
+        if avoid_uuids:
+            available = [u for u in matching_uuids if u not in avoid_uuids]
+            if available:
+                idx = min(size_index, len(available) - 1)
+                mig_uuid = available[idx]
+                print(f"   Selected UUID by size match ({gpu_g}g, size_index={size_index}): {mig_uuid}")
             else:
-                print(f"    No available MIG UUID (all in avoid list)")
-                return None
-    elif avoid_uuids:
-        available_uuids = [uuid for uuid in mig_uuids if uuid not in avoid_uuids]
-        print(f"   No slice_index, selecting from available UUIDs: {len(available_uuids)} / {len(mig_uuids)}")
-        if available_uuids:
-            mig_uuid = available_uuids[0]
-            print(f"   Selected UUID: {mig_uuid} (avoiding: {avoid_uuids})")
+                # 같은 크기 UUID가 모두 avoid → 다른 크기 중 available
+                fallback = [u for u in all_uuids if u not in avoid_uuids]
+                if fallback:
+                    mig_uuid = fallback[0]
+                    print(f"    Size-matched UUIDs all in avoid list, fallback: {mig_uuid}")
+                else:
+                    print(f"    No available MIG UUID (all in avoid list)")
+                    return None
         else:
-            print(f"    No available MIG UUID")
-            return None
+            # size_index로 같은 크기 중 N번째 선택 (프로파일 내 상대 위치)
+            idx = min(size_index, len(matching_uuids) - 1)
+            mig_uuid = matching_uuids[idx]
+            print(f"   Selected UUID by size match ({gpu_g}g, size_index={size_index}): {mig_uuid}")
     else:
-        mig_uuid = mig_uuids[0]
-        print(f"    No slice_index, using first MIG instance (UUID: {mig_uuid})")
+        # 크기 매칭 실패 → 기존 slice_index 방식 fallback
+        print(f"    No size match for {gpu_g}g, falling back to positional index")
+        if slice_index is not None and 0 <= slice_index < len(all_uuids):
+            mig_uuid = all_uuids[slice_index]
+        elif avoid_uuids:
+            available = [u for u in all_uuids if u not in avoid_uuids]
+            if available:
+                mig_uuid = available[0]
+            else:
+                print(f"    No available MIG UUID")
+                return None
+        else:
+            mig_uuid = all_uuids[0]
+        print(f"   Fallback UUID: {mig_uuid}")
 
-    # RAN / AI 분기
+    # RAN / AI 분기 사용해야할 helm install 명령어 다름.
     if is_ran:
-        helm_chart = os.path.join(repo_root, "workload", "aerial-l1")
+        node_name = "skt-6gtb-ars"
+        release = f"aerial-l1-{job_id}".lower().replace("_", "-")
+        helm_chart = os.path.join(repo_root, "workload", "heng","aerial-l1")
         cmd = [
             "helm", "install", release, helm_chart,
             "--set", f"nodeName={node_name}",
@@ -244,7 +253,10 @@ def deploy_job(job: Job, node_name: str, gpu_g: int, gpu_index: int = 0,
             "--set", f"launchPattern={launch_pattern}",
             "--set", f"cell_group_num={cell_group_num}"
         ]
+
     else:
+        release = f"test-{job_id}".lower().replace("_", "-")
+
         helm_chart = os.path.join(repo_root, "workload", "vllm-server")
         cmd = [
             "helm", "install", release, helm_chart,
@@ -254,7 +266,6 @@ def deploy_job(job: Job, node_name: str, gpu_g: int, gpu_index: int = 0,
             "--set-string", "secret.hfApiToken=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",
             "--set", f"gpuId={mig_uuid}"
         ]
-
     tag = "[RAN]" if is_ran else "[AI]"
     try:
         print(f"   {tag} Running: {' '.join(cmd)}")
@@ -268,6 +279,7 @@ def deploy_job(job: Job, node_name: str, gpu_g: int, gpu_index: int = 0,
     except Exception as e:
         print(f" {tag} Deploy error: {e}")
         return None
+
 
 
 def undeploy_ran_job(job_id: str):
@@ -361,7 +373,7 @@ def undeploy_jobs_batch(job_ids: list):
 
 
 def deploy_job_replica(replica_id: str, target_job_id: str, node_name: str, gpu_g: int,
-                       gpu_index: int = 0, slice_index: int = None, avoid_uuids: list = None):
+                       gpu_index: int = 0, slice_index: int = None, size_index: int = 0, avoid_uuids: list = None):
     """
     HP Job의 replica pod 배포 (scale-out)
 
@@ -388,40 +400,49 @@ def deploy_job_replica(replica_id: str, target_job_id: str, node_name: str, gpu_
     repo_root = os.path.dirname(script_dir)
     helm_chart = os.path.join(repo_root, "workload", "vllm-server-replica")
 
-    # MIG 인스턴스 UUID 가져오기
-    mig_uuids = get_mig_instance_uuids(node_name, gpu_index)
-    if not mig_uuids:
+    # MIG 인스턴스 UUID 가져오기 (크기 정보 포함)
+    mig_info = get_mig_instance_uuids(node_name, gpu_index, include_size=True)
+    if not mig_info:
         print(f" Failed to get MIG instance UUIDs for {node_name} GPU {gpu_index}")
         return None
 
-    # Slice index로 MIG UUID 선택
-    if slice_index is not None and 0 <= slice_index < len(mig_uuids):
-        mig_uuid = mig_uuids[slice_index]
-        print(f"   Deploying replica to slice {slice_index} (MIG UUID: {mig_uuid})")
+    # gpu_g 크기로 매칭 (nvidia-smi Device 순서 ≠ profile 문자열 순서)
+    matching_uuids = [uuid for sz, uuid in mig_info if sz == gpu_g]
+    all_uuids = [uuid for _, uuid in mig_info]
 
-        # avoid_uuids와 충돌 체크
-        if avoid_uuids and mig_uuid in avoid_uuids:
-            print(f"    Conflict: slice {slice_index} UUID {mig_uuid} is in avoid list")
-            print(f"    Trying to find alternative UUID...")
-            available_uuids = [uuid for uuid in mig_uuids if uuid not in avoid_uuids]
-            if available_uuids:
-                mig_uuid = available_uuids[0]
-                print(f"    Selected alternative UUID: {mig_uuid}")
+    if matching_uuids:
+        if avoid_uuids:
+            available = [u for u in matching_uuids if u not in avoid_uuids]
+            if available:
+                idx = min(size_index, len(available) - 1)
+                mig_uuid = available[idx]
+                print(f"   Replica UUID by size match ({gpu_g}g, size_index={size_index}): {mig_uuid}")
+            else:
+                fallback = [u for u in all_uuids if u not in avoid_uuids]
+                if fallback:
+                    mig_uuid = fallback[0]
+                    print(f"    Size-matched UUIDs all in avoid list, fallback: {mig_uuid}")
+                else:
+                    print(f"    No available MIG UUID (all in avoid list)")
+                    return None
+        else:
+            idx = min(size_index, len(matching_uuids) - 1)
+            mig_uuid = matching_uuids[idx]
+            print(f"   Replica UUID by size match ({gpu_g}g, size_index={size_index}): {mig_uuid}")
+    else:
+        print(f"    No size match for {gpu_g}g, falling back to positional index")
+        if slice_index is not None and 0 <= slice_index < len(all_uuids):
+            mig_uuid = all_uuids[slice_index]
+        elif avoid_uuids:
+            available = [u for u in all_uuids if u not in avoid_uuids]
+            if available:
+                mig_uuid = available[0]
             else:
                 print(f"    No available MIG UUID (all in avoid list)")
                 return None
-    elif avoid_uuids:
-        # slice_index 없지만 avoid_uuids 있으면 피해서 선택
-        available_uuids = [uuid for uuid in mig_uuids if uuid not in avoid_uuids]
-        if available_uuids:
-            mig_uuid = available_uuids[0]
-            print(f"    Selected UUID (avoiding conflicts): {mig_uuid}")
         else:
-            print(f"    No available MIG UUID (all in avoid list)")
-            return None
-    else:
-        mig_uuid = mig_uuids[0]
-        print(f"    Using first MIG instance (UUID: {mig_uuid})")
+            mig_uuid = all_uuids[0]
+        print(f"   Fallback UUID: {mig_uuid}")
 
     cmd = [
         "helm", "install", release, helm_chart,

@@ -1,3 +1,4 @@
+from __future__ import annotations
 # 필요한 라이브러리 import
 import csv
 from dataclasses import dataclass, field
@@ -34,7 +35,9 @@ class Job:
     allocated_size: Optional[int] = None  # 실제 할당된 슬라이스 크기 (req와 다를 수 있음)
 
     ## Binpacking Schefuler에 만 필요
-    source_node: GPUNode
+    source_node: Optional[GPUNode] = None
+    # Migration POd이 경우 필요
+    src_pod_name: Optional[str] = None
 
     def jct(self) -> float:
         """Job Completion Time (초)"""
@@ -50,11 +53,8 @@ class Job:
 
 @dataclass
 class RANJob(Job):
-    """RAN Job 정의 (Job 상속)"""
-    cell_id: str = "" 
-    band: str = ""    
-    bandwidth: int = 0
-    users: int = 0    
+    launch_pattern: str = "F08 1C 59"
+    cell_group_num: int = 1
 
 
 @dataclass
@@ -82,15 +82,15 @@ class GPUNode:
     # allocated_list: List[int]
     mig_profile: str
     gpu_index: int = 0  # GPU index for nvidia-smi -i <index>
-    # total_capacity: int = field(init=False)
+    total_capacity: int = field(init=False)
     slices: List[Dict] = field(init=False)  # MIG 슬라이스 목록
-    # current_plan: Optional[Dict] = None  # 현재 MIG 재구성 계획
-    # current_slot: Optional[int] = None  # 현재 실행 중인 slot 번호
-    # plan_start_time: Optional[float] = None  # Plan 시작 시간 (시뮬레이션 시간)
-    # hp_waiting_queue: List[Job] = field(default_factory=list)  # HP job 대기 큐
-    # spot_waiting_queue: List[Job] = field(default_factory=list)  # Spot
-    # hp_running_jobs: List[Job] = field(default_factory=list)  # 실행 중인 HP job
-    # spot_running_jobs: List[Job] = field(default_factory=list) # 실행
+    current_plan: Optional[Dict] = None  # 현재 MIG 재구성 계획
+    current_slot: Optional[int] = None  # 현재 실행 중인 slot 번호
+    plan_start_time: Optional[float] = None  # Plan 시작 시간 (시뮬레이션 시간)
+    hp_waiting_queue: List[Job] = field(default_factory=list)  # HP job 대기 큐
+    spot_waiting_queue: List[Job] = field(default_factory=list)  # Spot
+    hp_running_jobs: List[Job] = field(default_factory=list)  # 실행 중인 HP job
+    spot_running_jobs: List[Job] = field(default_factory=list) # 실행
 
     def __post_init__(self):
         self.total_capacity = sum(int(c) for c in self.mig_profile)
@@ -111,6 +111,9 @@ class GPUNode:
         # allcoated_list [ 3,0] <-> mig_profile_list [3,4]
         free_size_list = [slice for slice in self.slices if slice["used"] ==0 ]
         return free_size_list # [  {'id': 0, 'size': 3, 'used': 0, 'jobs': []},  {'id': 0, 'size': 3, 'used': 0, 'jobs': []} ]
+
+    def get_all_slice_list(self) -> list:
+        return self.slices
 
     def get_capacity(self) -> int:
         """총 용량 반환"""

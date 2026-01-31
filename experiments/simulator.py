@@ -41,7 +41,12 @@ class Simulator:
             print(f"Initial MIG slices: {self.node.get_slice_info()}")
             print(f"Total capacity: {self.node.get_capacity()}g")
 
-        # 실행 중인 job들
+        # 실행 중인 job들 "jov_id": Job 객체
+        """
+            self.running_jobs = {                                                                                                                  
+        "hp-001": Job(job_id="hp-001", name="vllm", job_type="deploy", req=3, ...),                                                        
+        "spot-002": Job(job_id="spot-002", name="bert", job_type="deploy", req=1, ...),                                                    
+        } """
         self.running_jobs: Dict[str, Job] = {}
 
         # 대기 큐

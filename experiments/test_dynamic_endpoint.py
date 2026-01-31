@@ -179,6 +179,8 @@ class JobRequest(BaseModel):
     req: int = 1  # MIG size (1, 2, 3, 4, 7)
     duration: float = 10.0  # 분 단위
     target_job_id: Optional[str] = None  # scale-out/in/up/down용
+    launch_pattern: Optional[str] = None  # RAN job용
+    cell_group_num: Optional[int] = None  # RAN job용
 
 
 class JobResponse(BaseModel):
@@ -243,9 +245,9 @@ def convert_numpy_arrays(prediction: dict) -> dict:
 def create_nodes():
     """GPU 노드 생성"""
     return [
-        GPUNode(name="skt-6gtb-ars", mig_profile="3211", gpu_index=0),
-        GPUNode(name="sys-221he-tnr", mig_profile="3211", gpu_index=0),
-        GPUNode(name="sys-221he-tnr", mig_profile="3211", gpu_index=1),
+        GPUNode(name="skt-6gtb-ars", mig_profile="33", gpu_index=0),
+        GPUNode(name="sys-221he-tnr", mig_profile="34", gpu_index=0),
+        GPUNode(name="sys-221he-tnr", mig_profile="33", gpu_index=1),
     ]
 
 
