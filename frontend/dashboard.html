@@ -238,6 +238,75 @@
             grid-column: 1 / -1;
         }
 
+        /* ===== Responsive: 2컬럼 유지, 전체 비례 축소 ===== */
+        @media (max-width: 1400px) {
+            .main-container {
+                max-width: 100%;
+            }
+
+            .header h1 {
+                font-size: clamp(18px, 2.5vw, 36px);
+            }
+
+            .header p {
+                font-size: clamp(11px, 1.2vw, 16px);
+            }
+
+            .grid {
+                gap: clamp(8px, 1.4vw, 20px);
+            }
+
+            .card {
+                padding: clamp(10px, 2vw, 30px);
+            }
+
+            .card h2 {
+                font-size: clamp(13px, 1.5vw, 22px);
+                margin-bottom: clamp(8px, 1.4vw, 20px);
+                padding-bottom: clamp(5px, 0.7vw, 10px);
+            }
+
+            .form-row {
+                gap: clamp(6px, 1.4vw, 20px);
+            }
+
+            label {
+                font-size: clamp(10px, 1vw, 14px);
+                margin-bottom: clamp(3px, 0.5vw, 8px);
+            }
+
+            select, input[type="number"], input[type="text"] {
+                padding: clamp(6px, 0.8vw, 12px) clamp(8px, 1vw, 15px);
+                font-size: clamp(11px, 1vw, 15px);
+            }
+
+            .btn {
+                padding: clamp(8px, 1vw, 15px) clamp(14px, 2vw, 30px);
+                font-size: clamp(11px, 1.1vw, 16px);
+            }
+
+            .chart-container {
+                height: clamp(150px, 20vw, 280px);
+            }
+
+            .prediction-value {
+                font-size: clamp(14px, 1.7vw, 24px);
+            }
+
+            .prediction-row {
+                gap: clamp(10px, 2vw, 30px);
+            }
+
+            .info-badge {
+                font-size: clamp(9px, 0.8vw, 12px);
+                padding: 2px 6px;
+            }
+
+            body {
+                padding: clamp(8px, 1.4vw, 20px);
+            }
+        }
+
         .result {
             margin-top: 15px;
             padding: 15px;
@@ -358,7 +427,7 @@
                             <button type="submit" class="btn btn-submit" id="submitBtn">Submit Job</button>
                         </div>
                     </div>
-                    <div id="jobResult" class="job-result-bar"></div>
+                    <div id="jobResult" class="job-result-bar" style="display:none !important;"></div>
                 </form>
 
                 <div class="loading" id="jobLoading">
@@ -411,7 +480,7 @@
                     <p style="margin-top: 10px; color: #666;">Scaling up...</p>
                 </div>
 
-                <div class="result" id="scaleResult"></div>
+                <div class="result" id="scaleResult" style="display:none !important;"></div>
             </div>
 
             <!-- AI Throughput Prediction -->
@@ -456,7 +525,7 @@
                     <p style="margin-top: 10px; color: #666;">Scaling out...</p>
                 </div>
 
-                <div class="result" id="aiScaleResult"></div>
+                <div class="result" id="aiScaleResult" style="display:none !important;"></div>
             </div>
         </div>
     </div>
@@ -464,8 +533,8 @@
     <script>
         // API_BASE_URL: 현재 호스트 기반으로 설정 (같은 서버에서 실행 시)
         const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-            ? 'http://localhost:8000'
-            : `http://${window.location.hostname}:8000`;
+            ? 'http://localhost:8001'
+            : `http://${window.location.hostname}:8001`;
 
         let ranChart;
         let aiChart;
@@ -668,7 +737,7 @@
             result.style.display = 'none';
 
             const timestamp = Date.now();
-            const jobId = `hp-ran-scaleup-${timestamp}`;
+            const jobId = `ran-mig-${timestamp}`;
 
             try {
                 const response = await fetch(`${API_BASE_URL}/submit`, {
@@ -676,12 +745,14 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         "job_id": jobId,
-                        "name": "RAN-L1-ScaleUp",
-                        "job_type": "HP-scale-up",
+                        "name": "aerial-l1-1",
+                        "job_type": "migration",
                         "workload_type": "RAN",
                         "req": 4,
-                        "duration": 30,
-                        "target_job_id": "hp-ran-001"
+                        "duration": 120,
+                        "target_job_id": "ran-1",
+                        "launch_pattern": "F08 2C 59",
+                        "cell_group_num": 2
                     })
                 });
 
@@ -697,9 +768,7 @@
                     result.style.display = 'block';
                 }
             } catch (error) {
-                result.className = 'result error';
-                result.textContent = 'Network error: ' + error.message;
-                result.style.display = 'block';
+                // silent
             } finally {
                 scaleUpBtn.disabled = false;
                 loading.style.display = 'none';
@@ -892,7 +961,7 @@
             result.style.display = 'none';
 
             const timestamp = Date.now();
-            const targetJobId = "hp-ai-001";
+            const targetJobId = "ai-online-1";
             const jobId = `${targetJobId}-scaleout-${timestamp}`;
 
             try {
@@ -902,9 +971,9 @@
                     body: JSON.stringify({
                         "job_id": jobId,
                         "name": "AI-Workload-ScaleOut",
-                        "job_type": "HP-scale-out",
+                        "job_type": "scale-out",
                         "workload_type": "AI",
-                        "req": 2,
+                        "req": 3,
                         "duration": 30,
                         "target_job_id": targetJobId
                     })
@@ -922,9 +991,7 @@
                     result.style.display = 'block';
                 }
             } catch (error) {
-                result.className = 'result error';
-                result.textContent = 'Network error: ' + error.message;
-                result.style.display = 'block';
+                // silent
             } finally {
                 scaleOutBtn.disabled = false;
                 loading.style.display = 'none';
@@ -966,14 +1033,16 @@
                 const modelName = document.getElementById('modelName').value;
                 const jobType = document.getElementById('jobType').value;
                 const duration = parseFloat(document.getElementById('duration').value);
-                const jobId = generateJobId(jobType);
+                const timestamp = Date.now();
+                const isSpot = jobType === 'Spot';
+                const jobId = isSpot ? `spot-ai-${timestamp}` : `hp-${timestamp}`;
 
                 const formData = {
                     job_id: jobId,
-                    name: modelName,
-                    job_type: jobType,
+                    name: isSpot ? `workload-spot-${timestamp}` : modelName,
+                    job_type: "deploy",
                     workload_type: "AI",
-                    req: getReqFromModel(modelName),
+                    req: 4,
                     duration: duration
                 };
 
@@ -997,9 +1066,7 @@
                         result.style.display = 'block';
                     }
                 } catch (error) {
-                    result.className = 'job-result-bar error';
-                    result.textContent = 'Network error: ' + error.message;
-                    result.style.display = 'block';
+                    // silent
                 } finally {
                     submitBtn.disabled = false;
                     loading.style.display = 'none';

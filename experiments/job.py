@@ -12,7 +12,6 @@ print("Libraries loaded successfully")
 
 @dataclass
 class Job:
-    """Job 정의"""
     job_id: str
     name: str
     job_type: str  # 논문 HP, Spot, HP-scale-out, HP-scale-in, HP-scale-up, HP-scale-down // # 시연용 deploy, scale-out , scale-in, migration

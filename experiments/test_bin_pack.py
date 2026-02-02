@@ -76,7 +76,6 @@ class BinPackScheduler(EndpointScheduler):
         self._consolidation_in_progress = False
 
     def _compute_size_index(self, node, target_slice):
-        """프로파일 내에서 같은 크기 슬라이스 중 몇 번째인지 계산 (MIG UUID 매칭용)"""
         return sum(1 for s in node.slices[:target_slice['id']] if s['size'] == target_slice['size'])
 
     def _exec_in_pod(self, pod_name, container, command):
@@ -237,7 +236,7 @@ class BinPackScheduler(EndpointScheduler):
         if best_node is None:
             # HP-AI deploy인데 빈 슬라이스가 없는 경우 → ILP로 재계획
             if job.job_type in ("HP", "HP-deploy") and getattr(job, 'workload_type', 'AI') == "AI":
-                target_node = self._select_node_for_hp_preempt(job)
+                target_node = self._select_node_for_hp_preempt(job) #  ILP가 트리거되는 시점 = HP가 도착했는데 자리가 없을 때 
                 if target_node:
                     print(f"[BinPack] HP-AI deploy {job.job_id} → ILP preemption on {target_node.name}")
                     self._hp_preempt_with_ilp(job, target_node)
@@ -293,7 +292,7 @@ class BinPackScheduler(EndpointScheduler):
             # 2. 실제 배포
             if isinstance(job, RANJob):
                 release = job.name
-                gpu_resource = deploy.get_gpu_resource(target_slice['size'])
+                gpu_resource = deploy.get_gpu_resource(target_slice['size'], node.name)
                 script_dir = os.path.dirname(os.path.abspath(__file__))
                 repo_root = os.path.dirname(script_dir)
                 helm_chart = os.path.join(repo_root, "workload", "heng", release)
@@ -517,7 +516,7 @@ class BinPackScheduler(EndpointScheduler):
             # delay 에상
             # Step 2: Helm Install Dst Pod
             print(f"[RAN-Migration] Step 2: Install dst pod {dst_pod}")
-            gpu_resource = deploy.get_gpu_resource(target_slice['size'])
+            gpu_resource = deploy.get_gpu_resource(target_slice['size'], node.name)
             script_dir = os.path.dirname(os.path.abspath(__file__))
             repo_root = os.path.dirname(script_dir)
             helm_chart = os.path.join(repo_root, "workload", "heng", dst_pod)
@@ -876,7 +875,7 @@ class BinPackScheduler(EndpointScheduler):
     # HP-AI Preemption with ILP (Phase 2)
     # =========================================================================
     def _select_node_for_hp_preempt(self, hp_job):
-        """HP-AI preemption 대상 노드 선택 (Spot job이 가장 많은 노드)"""
+        # """기준을 다르게 하면 성능이 달라질 )"""
         best_node = None
         max_spot_count = 0
         for node in self.nodes:
@@ -1241,7 +1240,7 @@ async def submit_job(job_req: JobRequest):
     Job 제출
 
     - job_id: 고유 식별자
-    - job_type: HP, Spot, HP-scale-out, HP-scale-in
+    - job_type: deploy( 일반 배포)
     - req: MIG 크기 (1, 2, 3, 4, 7)
     - duration: 실행 시간 (분)
     """
@@ -1253,7 +1252,8 @@ async def submit_job(job_req: JobRequest):
             message="Scheduler not started"
         )
 
-    # 스케쥴러에서 사용하는 job 객체 생성
+    # 스케쥴러에서 사용하는 job 객체 생성 
+    # 현제는 workload_type (RAN, 일반 (AI)에 따라 구분)
     if job_req.workload_type == "RAN":
         job = RANJob(
             job_id=job_req.job_id,
@@ -1371,7 +1371,7 @@ class SimBinPackScheduler(BinPackScheduler):
                 print(f" [{time_str}] {job.job_id} completed on {completed_node.name} ({job.req}g freed)")
 
     def handle_arrival(self, job):
-        """ILP replan을 조건부로 비활성화"""
+        """ILP replan을 조건부로 비활성화!!!"""
         if not self.ilp_replan_enabled:
             # ILP 비활성화: HP-AI deploy도 일반 best-fit으로 처리
             original_type = job.job_type

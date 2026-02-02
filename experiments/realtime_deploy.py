@@ -79,9 +79,12 @@ def run_cmd_on_node(node_name: str, cmd: str, timeout: int = 60) -> dict:
         return {"ok": False, "error": str(e), "returncode": -1}
 
 
-def get_gpu_resource(gpu_g: int) -> str:
-    """GPU 크기 → MIG 리소스 키"""
-    memory_map = {1: "12gb", 2: "24gb", 3: "48gb", 4: "48gb", 7: "80gb"}
+def get_gpu_resource(gpu_g: int, node_name: str = "") -> str:
+    """GPU 크기 → MIG 리소스 키 (노드별 메모리 크기 분기)"""
+    if node_name == "sys-221he-tnr":
+        memory_map = {1: "12gb", 2: "24gb", 3: "47gb", 4: "47gb", 7: "80gb"}
+    else:
+        memory_map = {1: "12gb", 2: "24gb", 3: "48gb", 4: "48gb", 7: "80gb"}
     return f"nvidia.com/mig-{gpu_g}g.{memory_map.get(gpu_g, '10gb')}"
 
 
@@ -186,7 +189,7 @@ def deploy_job(job: Job, node_name: str, gpu_g: int, gpu_index: int = 0,
     is_ran = isinstance(job, RANJob)
 
 
-    gpu_resource = get_gpu_resource(gpu_g)
+    gpu_resource = get_gpu_resource(gpu_g, node_name)
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     repo_root = os.path.dirname(script_dir)
@@ -390,7 +393,7 @@ def deploy_job_replica(replica_id: str, target_job_id: str, node_name: str, gpu_
         mig_uuid: 배포된 MIG UUID (성공 시), None (실패 시)
     """
     release = f"test-{replica_id}".lower().replace("_", "-")
-    gpu_resource = get_gpu_resource(gpu_g)
+    gpu_resource = get_gpu_resource(gpu_g, node_name)
 
     # 원본 job의 service ID 생성
     service_id = f"test-{target_job_id}".lower().replace("_", "-")
