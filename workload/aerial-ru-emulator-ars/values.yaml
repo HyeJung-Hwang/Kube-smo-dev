@@ -1,0 +1,27 @@
+---
+nodeName: skt-6gtb-ars
+extraSpec:
+  nodeName: skt-6gtb-ars
+securityContext:
+  runAsUser: 0
+  runAsGroup: 0
+image:
+  repository: localhost:5000/
+  name: cubb-build
+  pullPolicy: Always
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: "25-2-FAPI"
+aerialSDKDir: /opt/nvidia/cuBB/
+workingDir: /opt/nvidia/cuBB/build
+config: config.yaml
+peerethaddr: 9c:63:c0:d8:eb:9a
+launchPattern: F08 1C 39
+overrideRun: ""
+imagePullSecrets:
+  - name: regcred
+extraMountPaths: null
+extraVolumes: null
+extraSetup: null
+  # sed -i 's/enable_beam_forming:.*/enable_beam_forming: 1/' ../cuPHY-CP/ru-emulator/config/config_dyn.yaml
+  # sed -i 's/nic_interface:.*/nic_interface: 0000:99:00.0/' ../cuPHY-CP/ru-emulator/config/config_dyn.yaml
+

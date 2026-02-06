@@ -447,6 +447,8 @@ def run_bin_pack(
         reserved_gi_ids: Optional[list] = None,  # 삭제하지 않을 GI ID 리스트 (HP용)
         # === Dry-run 모드 ===
         dry_run: bool = False,                   # True: 동적 조회 없이 정적 configs만 사용
+        # === HP 우선순위 ===
+        hp_job_names: Optional[set] = None,      # HP job 이름 set (우선 배치)
     ):
     """
     MIG 구성 최적화를 위한 ILP 기반 Bin Packing
@@ -604,7 +606,7 @@ def run_bin_pack(
         print(f"    [bin_pack] ERROR: No valid configs available")
         return None
 
-    sols = solve_k_best(5, job_list, configs, slot_minutes, delta, init_config)
+    sols = solve_k_best(5, job_list, configs, slot_minutes, delta, init_config, hp_job_names)
     best = pick_best_by_makespan_then_avgjct(sols, slot_minutes)
 
     if best:

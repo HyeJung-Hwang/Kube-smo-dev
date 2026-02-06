@@ -1,0 +1,190 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "aerial-l1.fullname" . }}
+  labels:
+    app.kubernetes.io/name: {{ include "aerial-l1.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+
+spec:
+  nodeName: {{ .Values.nodeName}}
+  
+
+
+  {{- with .Values.extraSpec }}
+  {{- toYaml . | nindent 2 }}
+  {{- end }}
+
+  {{- with .Values.securityContext }}
+  securityContext:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+
+  hostNetwork: true
+  restartPolicy: Never
+
+  containers:
+  - name: aerial-l1-ctr
+    image: {{ .Values.image.repository }}{{ .Values.image.name }}:{{ .Values.image.tag | default .Chart.AppVersion }}
+    imagePullPolicy: Always
+    workingDir: {{ .Values.workingDir }}
+    command: ["/bin/sh"]
+    args:
+      - "-c"
+      - |
+        # sleep infinity
+        nvidia-smi -L
+        sed -i "s/ul_rx_pkt_tracing_level.*/ul_rx_pkt_tracing_level: 2/" /opt/nvidia/cuBB/cuPHY-CP/cuphycontroller/config/cuphycontroller_F08_CG1.yaml;
+        sed -i "s/cell_group_num: .*/cell_group_num: {{ .Values.cell_group_num }}/" /opt/nvidia/cuBB/cuPHY-CP/cuphycontroller/config/cuphycontroller_F08_CG1.yaml;
+        python3 /opt/nvidia/cuBB/cubb_scripts/autoconfig/auto_assign_cores.py -n 0 -p /opt/nvidia/cuBB/cuPHY-CP/cuphycontroller/config/cuphycontroller_F08_CG1.yaml;
+        sudo rm -rf /tmp/phy.log && \
+        /opt/nvidia/cuBB/aerial_l1_entrypoint.sh
+        # sudo nvidia-smi -pm 1;
+        # sudo nvidia-smi -lgc $(sudo nvidia-smi --query-supported-clocks=graphics --format=csv,noheader,nounits | sort -h | tail -n 1);
+        # echo -1 | sudo tee /proc/sys/kernel/sched_rt_runtime_us;
+        # export AERIAL_GPU_PCI_ADDR=`nvidia-smi -q | grep "Bus Id" | awk '{print $4}'`
+        # export CUDA_MPS_PIPE_DIRECTORY=/var;
+        # export CUDA_MPS_LOG_DIRECTORY=/var;
+        # sudo -E nvidia-cuda-mps-control -d;
+        # sudo -E echo start_server -uid 0 | sudo -E nvidia-cuda-mps-control;
+        # python3 /opt/nvidia/cuBB/cubb_scripts/autoconfig/auto_assign_cores.py -n 0 -p /opt/nvidia/cuBB/cuPHY-CP/cuphycontroller/config/cuphycontroller_F08_CG1.yaml --test-affinitycpus "4-11"
+        # # python3 {{ .Values.aerialSDKDir }}cubb_scripts/autoconfig/auto_assign_cores.py -p {{ .Values.aerialSDKDir }}cuPHY-CP/cuphycontroller/config/cuphycontroller_{{- .Values.configL1 -}}.yaml {{- if .Values.enableDebugWorker }} -d {{- end }} || exit 1;
+        # sudo -E ./cuPHY-CP/cuphycontroller/examples/cuphycontroller_scf dyncore
+
+    securityContext:
+      privileged: true
+    volumeMounts:
+    - mountPath: /hugepages
+      name: hugepage
+    - mountPath: /dev/shm
+      name: dshm
+    - mountPath: /lib/modules/
+      name: lib-modules
+    - mountPath: /usr/src/
+      name: host-drivers
+    - mountPath: /dev/
+      name: dev
+    - mountPath: /opt/nvidia/cuBB/testVectors
+      name: test-vector
+    - mountPath: /opt/nvidia/cuBB/aerial_l1_entrypoint.sh
+      name: aerial-configs
+      subPath: aerial_l1_entrypoint.sh
+    - mountPath: /opt/nvidia/cuBB/cuPHY-CP/cuphycontroller/config/cuphycontroller_F08_CG1.yaml
+      name: aerial-configs
+      subPath: cuphycontroller.yaml
+    {{- with .Values.extraMountPaths }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    resources:
+      requests:
+        hugepages-1Gi: 8Gi
+        memory: 32Gi
+        {{ .Values.gpuResource }}: 1
+        cpu: {{ .Values.cpu }}
+      limits:
+        hugepages-1Gi: 8Gi
+        memory: 32Gi
+        {{ .Values.gpuResource }}: 1
+        cpu: {{ .Values.cpu }}
+
+{{- if .Values.enableTestMACContainer }}
+  - name: aerial-testmac-ctr
+    image: {{ .Values.image.repository }}{{ .Values.image.name }}:{{ .Values.image.tag | default .Chart.AppVersion }}
+    imagePullPolicy: Always
+    workingDir: {{ .Values.workingDir }}
+    command: ["/bin/sh"]
+    args:
+      - "-c"
+      - | 
+        # export CUDA_VISIBLE_DEVICES=$(nvidia-smi -L|grep 'MIG 3g\.'| sed -n 's/.*(UUID: \(.*\))/\1/p')
+        # echo $CUDA_VISIBLE_DEVICES
+        python3 /opt/nvidia/cuBB/cubb_scripts/autoconfig/auto_assign_cores.py -n 0 -t /opt/nvidia/cuBB/cuPHY-CP/testMAC/testMAC/test_mac_config.yaml  || exit 1;
+        cp /opt/nvidia/cuBB/cuPHY-CP/testMAC/testMAC/test_mac_config.yaml /opt/nvidia/cuBB/cuPHY-CP/testMAC/testMAC/test_mac_config_dyncore.yaml
+        sed -i 's/schedule_total_time: *0/schedule_total_time: 470000/' /opt/nvidia/cuBB/cuPHY-CP/testMAC/testMAC/test_mac_config_dyncore.yaml
+        sed -i 's/fapi_delay_bit_mask: *0/fapi_delay_bit_mask: 0xF/' /opt/nvidia/cuBB/cuPHY-CP/testMAC/testMAC/test_mac_config_dyncore.yaml
+        sed -i 's/builder_thread_enable: *0/builder_thread_enable: 1/' /opt/nvidia/cuBB/cuPHY-CP/testMAC/testMAC/test_mac_config_dyncore.yaml
+        sed -i "s/oam_cell_ctrl_cmd:.*/oam_cell_ctrl_cmd: 1/" /opt/nvidia/cuBB/cuPHY-CP/testMAC/testMAC/test_mac_config_dyncore.yaml
+        sed -i "s/oam_server_addr:.*/oam_server_addr: 127.0.0.2:50052/" $cuBB_SDK/cuPHY-CP/testMAC/testMAC/test_mac_config_dyncore.yaml
+        sudo -E /opt/nvidia/cuBB/build/cuPHY-CP/testMAC/testMAC/test_mac --config test_mac_config_dyncore.yaml {{ .Values.launchPattern }}
+        # python3 /opt/nvidia/cuBB/cubb_scripts/autoconfig/auto_assign_cores.py -n 0 -t /opt/nvidia/cuBB/cuPHY-CP/testMAC/testMAC/test_mac_config.yaml --test-affinitycpus "12-14" || exit 1;
+
+
+    securityContext:
+      privileged: true
+    volumeMounts:
+    - mountPath: /dev/shm
+      name: dshm
+    - mountPath: /usr/src/
+      name: host-drivers
+    - mountPath: /opt/nvidia/cuBB/testVectors
+      name: test-vector
+    # - mountPath: /opt/nvidia/cuBB/aerial_l1_entrypoint.sh
+    #   name: aerial-entrypoint
+    # - mountPath: /opt/nvidia/cuBB/cuPHY-CP/cuphycontroller/config/cuphycontroller_F08_CG1_skt.yaml
+    #   subPath: cuphycontroller_F08_CG1_skt.yaml
+    #   name: cuphycontroller-config
+    {{- with .Values.extraMountPaths }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    resources:
+      requests:
+        memory: 32Gi
+        cpu: {{.Values.cpuTestMAC}}
+      limits:
+        memory: 32Gi
+        cpu: {{.Values.cpuTestMAC}}
+  {{- end }}
+
+  - name: metrics-proxy
+    image: nginx:alpine
+    ports:
+    - name: metrics
+      containerPort: 9091
+      protocol: TCP
+    resources:
+      requests:
+        cpu: "2"
+        memory: "128Mi"
+      limits:
+        cpu: "2"
+        memory: "128Mi"
+    volumeMounts:
+    - name: nginx-config
+      mountPath: /etc/nginx/nginx.conf
+      subPath: nginx.conf
+
+  volumes:
+  - name: hugepage
+    emptyDir:
+      medium: HugePages
+  - name: dshm
+    emptyDir:
+      medium: "Memory"
+      sizeLimit: "4Gi"
+  - name: lib-modules
+    hostPath:
+      path: /lib/modules/
+  - name: host-drivers
+    hostPath:
+      path: /usr/src/
+  - name: dev
+    hostPath:
+      path: /dev/
+  - name: test-vector
+    persistentVolumeClaim:
+      claimName: local-pvc-sys-25-2
+  - name: aerial-configs
+    configMap:
+      name: {{ .Chart.Name  }}-configmap
+      defaultMode: 0755
+  - name: nginx-config
+    configMap:
+      name: {{ .Chart.Name }}-nginx-config
+  {{- with .Values.extraVolumes }}
+  {{- toYaml . | nindent 2 }}
+  {{- end }}

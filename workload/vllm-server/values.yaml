@@ -1,0 +1,70 @@
+# values.yaml - vLLM Server Mode for Locust Testing
+
+# -- Node configuration
+nodeName: "skt-6gtb-ars"
+gpuResource: "nvidia.com/mig-1g.12gb"
+serviceId: "test-2-vllm-server"
+gpuId: "MIG-3533b74a-e882-542e-9010-f49e9436c11a"
+# -- vLLM Server settings
+server:
+  # Image configuration
+  sysImage:
+    repository: "us-docker.pkg.dev/vertex-ai/vertex-vision-model-garden-dockers/pytorch-vllm-serve"
+    tag: "latest"
+  arsImage:
+    repository: "localhost:5000/vllm-gh200-openai"
+    tag: "latest"
+
+  # Model configuration
+  modelPath: "/root/.cache/huggingface/hub/models--meta-llama--Llama-3.2-1B-Instruct"
+
+  # Server parameters
+  host: "0.0.0.0"
+  port: 8000
+
+  # vLLM engine settings
+  tensorParallelSize: 1
+  maxModelLen: 4096
+
+  # Hugging Face token secret
+  hfTokenSecret:
+    name: "hf-secret"
+    key: "hf_api_token"
+
+  # Resource limits
+  resources:
+    requests:
+      cpu: "2"
+      memory: "16Gi"
+    limits:
+      cpu: "2"
+      memory: "16Gi"
+
+  # Service configuration
+  service:
+    type: "ClusterIP"
+    port: 8000
+    targetPort: 8000
+
+# -- Hugging Face API token
+secret:
+  enabled: true
+  hfApiToken: ""
+
+# -- Volume mount for local models
+volumes:
+  hfCache:
+    hostPath: "/data/models/huggingface"
+    mountPath: "/root/.cache/huggingface"
+
+# -- Monitoring configuration
+monitoring:
+  # Enable ServiceMonitor (for Prometheus Operator)
+  enabled: true
+  interval: "30s"
+  scrapeTimeout: "10s"
+  labels: {}
+
+  # Enable PodMonitoring (for GKE/Google Cloud Monitoring)
+  podMonitoring:
+    enabled: false

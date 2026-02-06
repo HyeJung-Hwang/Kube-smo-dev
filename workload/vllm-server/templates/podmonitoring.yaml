@@ -1,0 +1,16 @@
+{{- if .Values.monitoring.podMonitoring.enabled }}
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata:
+  name: {{ include "vllm-server.fullname" . }}
+  labels:
+    {{- include "vllm-server.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "vllm-server.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: {{ .Values.server.service.port }}
+      path: /metrics
+      interval: {{ .Values.monitoring.interval }}
+{{- end }}

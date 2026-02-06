@@ -1,0 +1,444 @@
+# Copyright (c) 2020-2024, NVIDIA CORPORATION.  All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without modification, are permitted
+# provided that the following conditions are met:
+#     * Redistributions of source code must retain the above copyright notice, this list of
+#       conditions and the following disclaimer.
+#     * Redistributions in binary form must reproduce the above copyright notice, this list of
+#       conditions and the following disclaimer in the documentation and/or other materials
+#       provided with the distribution.
+#     * Neither the name of the NVIDIA CORPORATION nor the names of its contributors may be used
+#       to endorse or promote products derived from this software without specific prior written
+#       permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+# IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+# FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+# BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+# OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+# STRICT LIABILITY, OR TOR (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+---
+aerial_sdk_version: 25-2-cubb
+ru_emulator:
+  #ul_core_list: [2,3,4,5,6,7,8,9]
+  #dl_core_list: [10,11,12,13,14,15,16]
+  ul_core_list: [2,3,4,5,6,7,8,9,10,11]
+  dl_core_list: [12,13,14,15,16,17,18,19,20,21]
+  dl_rx_core_list: [68,70,72,74,76,78,80,82,84,86,88,90,92,94,96,98,100,102,104,106] #Valid only if enable_dl_proc_mt is 1
+
+  # nvlog name: the nvlog instance name
+  nvlog_name: ru
+
+  # Send cell config/start/stop request via OAM command
+  oam_cell_ctrl_cmd: 0
+
+  low_priority_core: 23
+
+  # PCI Address of NIC interface used
+  nics:
+    - nic_interface: '01:00.0'
+    - nic_interface: '01:00.1'
+  # MAC address of cuPHYController port in use
+  peers:
+    # - peerethaddr: 48:b0:2d:a6:02:32 #e200-r750-1 (P0)
+    # - peerethaddr: 48:b0:2d:63:86:2c #e200-r750-2 (P0)
+    # - peerethaddr: 48:b0:2d:a6:2e:74 #k1-r750-01(RoyB) (P0)
+    # - peerethaddr: 48:b0:2d:a6:28:02 #k1-r750-02(RoyB) (P0)
+    # - peerethaddr: 48:b0:2d:a6:0f:f2 #e200-r750-04 (P0)
+    # - peerethaddr: 48:b0:2d:63:6a:6c #munich-aerial-mec (P0)
+    # - peerethaddr: 48:b0:2d:a6:28:86 #munich-aerial-cn (P0)
+    # - peerethaddr: 48:b0:2d:a6:00:a6 #k1-r750-07(RoyB) (P0)
+    # - peerethaddr: 94:6d:ae:c7:6c:3e #gh-qct-cg1-qs-01 (P0)
+    # - peerethaddr: 94:6d:ae:f5:a1:a6 #gh-smc-cg1-qs-01 (P0)
+    # - peerethaddr: 94:6d:ae:f5:a6:1a #gh-smc-cg1-qs-02 (P0)
+    # - peerethaddr: 94:6d:ae:f5:a7:96 #gh-smc-cg1-qs-03 (P0)
+    - peerethaddr: 9c:63:c0:d8:eb:9a #48:b0:2d:a6:27:d6 #k1-r750-08(RoyB) (P0)
+    - peerethaddr: 9c:63:c0:d8:eb:9b #94:6d:ae:f5:a6:8c #gh-smc-cg1-qs-07
+
+
+  cell_configs:
+    -
+      name: "Cell1"
+      eth: "20:04:9B:9E:27:A3"
+      eAxC_UL: [8,0,1,2]
+      eAxC_DL: [8,0,1,2]
+      eAxC_prach_list: [15,7,0,1]
+      eAxC_srs_list: [9,3,5,6]
+      dl_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      ul_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      fs_offset_dl: 0
+      exponent_dl: 4
+      ref_dl: 0
+      ru_type: 3
+      peer: 0
+      nic: 0
+      vlan: 2
+      pcp: 7
+    -
+      name: "Cell2"
+      eth: "26:04:9D:9E:29:B3"
+      eAxC_UL: [1,2,4,9]
+      eAxC_DL: [1,2,4,9]
+      eAxC_prach_list: [5,6,7,10]
+      eAxC_srs_list: [5,6,7,10]
+      dl_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      ul_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      fs_offset_dl: 0
+      exponent_dl: 4
+      ref_dl: 0
+      ru_type: 3
+      peer: 0
+      nic: 0
+      vlan: 2
+      pcp: 7
+    -
+      name: "Cell3"
+      eth: "20:34:9A:9E:29:B3"
+      eAxC_UL: [1,2,4,9]
+      eAxC_DL: [1,2,4,9]
+      eAxC_prach_list: [5,6,7,10]
+      eAxC_srs_list: [5,6,7,10]
+      dl_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      ul_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      fs_offset_dl: 0
+      exponent_dl: 4
+      ref_dl: 0
+      ru_type: 3
+      peer: 0
+      nic: 0
+      vlan: 2
+      pcp: 7
+    -
+      name: "Cell4"
+      eth: "22:34:9C:9E:29:A3"
+      eAxC_UL: [0,1,2,3]
+      eAxC_DL: [0,1,2,3]
+      eAxC_prach_list: [5,6,7,10]
+      eAxC_srs_list: [5,6,7,10]
+      dl_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      ul_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      fs_offset_dl: 0
+      exponent_dl: 4
+      ref_dl: 0
+      ru_type: 3
+      peer: 0
+      nic: 0
+      vlan: 2
+      pcp: 7
+    -
+      name: "Cell5"
+      eth: "20:04:9B:9E:27:05"
+      eAxC_UL: [0,1,2,3]
+      eAxC_DL: [0,1,2,3]
+      eAxC_prach_list: [5,6,7,10]
+      eAxC_srs_list: [5,6,7,10]
+      dl_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      ul_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      fs_offset_dl: 0
+      exponent_dl: 4
+      ref_dl: 0
+      ru_type: 3
+      peer: 0
+      nic: 0
+      vlan: 2
+      pcp: 7
+    -
+      name: "Cell6"
+      eth: "20:04:9B:9E:27:06"
+      eAxC_UL: [0,1,2,3]
+      eAxC_DL: [0,1,2,3]
+      eAxC_prach_list: [5,6,7,10]
+      eAxC_srs_list: [5,6,7,10]
+      dl_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      ul_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      fs_offset_dl: 0
+      exponent_dl: 4
+      ref_dl: 0
+      ru_type: 3
+      peer: 0
+      nic: 0
+      vlan: 2
+      pcp: 7
+    -
+      name: "Cell7"
+      eth: "20:04:9B:9E:27:07"
+      eAxC_UL: [0,1,2,3]
+      eAxC_DL: [0,1,2,3]
+      eAxC_prach_list: [5,6,7,10]
+      eAxC_srs_list: [5,6,7,10]
+      dl_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      ul_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      fs_offset_dl: 0
+      exponent_dl: 4
+      ref_dl: 0
+      ru_type: 3
+      peer: 0
+      nic: 0
+      vlan: 2
+      pcp: 7
+    -
+      name: "Cell8"
+      eth: "20:04:9B:9E:27:08"
+      eAxC_UL: [0,1,2,3]
+      eAxC_DL: [0,1,2,3]
+      eAxC_prach_list: [5,6,7,10]
+      eAxC_srs_list: [5,6,7,10]
+      dl_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      ul_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      fs_offset_dl: 0
+      exponent_dl: 4
+      ref_dl: 0
+      ru_type: 3
+      peer: 0
+      nic: 0
+      vlan: 2
+      pcp: 7
+    -
+      name: "Cell9"
+      eth: "20:04:9B:9E:27:09"
+      eAxC_UL: [0,1,2,3]
+      eAxC_DL: [0,1,2,3]
+      eAxC_prach_list: [5,6,7,10]
+      eAxC_srs_list: [5,6,7,10]
+      dl_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      ul_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      fs_offset_dl: 0
+      exponent_dl: 4
+      ref_dl: 0
+      ru_type: 3
+      peer: 0
+      nic: 0
+      vlan: 2
+      pcp: 7
+    -
+      name: "Cell10"
+      eth: "20:04:9B:9E:27:0A"
+      eAxC_UL: [0,1,2,3]
+      eAxC_DL: [0,1,2,3]
+      eAxC_prach_list: [5,6,7,10]
+      eAxC_srs_list: [5,6,7,10]
+      dl_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      ul_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      fs_offset_dl: 0
+      exponent_dl: 4
+      ref_dl: 0
+      ru_type: 3
+      peer: 0
+      nic: 0
+      vlan: 2
+      pcp: 7
+    -
+      name: "Cell11"
+      eth: "20:04:9B:9E:27:0B"
+      eAxC_UL: [0,1,2,3]
+      eAxC_DL: [0,1,2,3]
+      eAxC_prach_list: [5,6,7,10]
+      eAxC_srs_list: [5,6,7,10]
+      dl_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      ul_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      fs_offset_dl: 0
+      exponent_dl: 4
+      ref_dl: 0
+      ru_type: 3
+      peer: 1
+      nic: 1
+      vlan: 2
+      pcp: 7
+    -
+      name: "Cell12"
+      eth: "20:04:9B:9E:27:0C"
+      eAxC_UL: [0,1,2,3]
+      eAxC_DL: [0,1,2,3]
+      eAxC_prach_list: [5,6,7,10]
+      eAxC_srs_list: [5,6,7,10]
+      dl_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      ul_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      fs_offset_dl: 0
+      exponent_dl: 4
+      ref_dl: 0
+      ru_type: 3
+      peer: 1
+      nic: 1
+      vlan: 2
+      pcp: 7
+    -
+      name: "Cell13"
+      eth: "20:04:9B:9E:27:0D"
+      eAxC_UL: [0,1,2,3]
+      eAxC_DL: [0,1,2,3]
+      eAxC_prach_list: [5,6,7,10]
+      eAxC_srs_list: [5,6,7,10]
+      dl_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      ul_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      fs_offset_dl: 0
+      exponent_dl: 4
+      ref_dl: 0
+      ru_type: 3
+      peer: 1
+      nic: 1
+      vlan: 2
+      pcp: 7
+    -
+      name: "Cell14"
+      eth: "20:04:9B:9E:27:0E"
+      eAxC_UL: [0,1,2,3]
+      eAxC_DL: [0,1,2,3]
+      eAxC_prach_list: [5,6,7,10]
+      eAxC_srs_list: [5,6,7,10]
+      dl_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      ul_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      fs_offset_dl: 0
+      exponent_dl: 4
+      ref_dl: 0
+      ru_type: 3
+      peer: 1
+      nic: 1
+      vlan: 2
+      pcp: 7
+    -
+      name: "Cell15"
+      eth: "20:04:9B:9E:27:0F"
+      eAxC_UL: [0,1,2,3]
+      eAxC_DL: [0,1,2,3]
+      eAxC_prach_list: [5,6,7,10]
+      eAxC_srs_list: [5,6,7,10]
+      dl_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      ul_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      fs_offset_dl: 0
+      exponent_dl: 4
+      ref_dl: 0
+      ru_type: 3
+      peer: 1
+      nic: 1
+      vlan: 2
+      pcp: 7
+    -
+      name: "Cell16"
+      eth: "20:04:9B:9E:27:10"
+      eAxC_UL: [0,1,2,3]
+      eAxC_DL: [0,1,2,3]
+      eAxC_prach_list: [5,6,7,10]
+      eAxC_srs_list: [5,6,7,10]
+      dl_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      ul_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      fs_offset_dl: 0
+      exponent_dl: 4
+      ref_dl: 0
+      ru_type: 3
+      peer: 1
+      nic: 1
+      vlan: 2
+      pcp: 7
+    -
+      name: "Cell17"
+      eth: "20:04:9B:9E:27:11"
+      eAxC_UL: [0,1,2,3]
+      eAxC_DL: [0,1,2,3]
+      eAxC_prach_list: [5,6,7,10]
+      eAxC_srs_list: [5,6,7,10]
+      dl_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      ul_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      fs_offset_dl: 0
+      exponent_dl: 4
+      ref_dl: 0
+      ru_type: 3
+      peer: 1
+      nic: 1
+      vlan: 2
+      pcp: 7
+    -
+      name: "Cell18"
+      eth: "20:04:9B:9E:27:12"
+      eAxC_UL: [0,1,2,3]
+      eAxC_DL: [0,1,2,3]
+      eAxC_prach_list: [5,6,7,10]
+      eAxC_srs_list: [5,6,7,10]
+      dl_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      ul_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      fs_offset_dl: 0
+      exponent_dl: 4
+      ref_dl: 0
+      ru_type: 3
+      peer: 1
+      nic: 1
+      vlan: 2
+      pcp: 7
+    -
+      name: "Cell19"
+      eth: "20:04:9B:9E:27:13"
+      eAxC_UL: [0,1,2,3]
+      eAxC_DL: [0,1,2,3]
+      eAxC_prach_list: [5,6,7,10]
+      eAxC_srs_list: [5,6,7,10]
+      dl_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      ul_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      fs_offset_dl: 0
+      exponent_dl: 4
+      ref_dl: 0
+      ru_type: 3
+      peer: 1
+      nic: 1
+      vlan: 2
+      pcp: 7
+    -
+      name: "Cell20"
+      eth: "20:04:9B:9E:27:14"
+      eAxC_UL: [0,1,2,3]
+      eAxC_DL: [0,1,2,3]
+      eAxC_prach_list: [5,6,7,10]
+      eAxC_srs_list: [5,6,7,10]
+      dl_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      ul_iq_data_fmt: {comp_meth: 1, bit_width: 9}
+      fs_offset_dl: 0
+      exponent_dl: 4
+      ref_dl: 0
+      ru_type: 3
+      peer: 1
+      nic: 1
+      vlan: 2
+      pcp: 7
+  tti: 500
+  dl_up_sanity_check: 1
+  max_sect_stats: 0
+  dl_bfw_validation: 1
+  ul_bfw_validation: 1
+  validate_dl_timing: 1
+  timing_histogram: 0
+  timing_histogram_bin_size: 1000 # in nanoseconds
+  dl_approx_validation: 0
+  enable_mmimo: 0
+  enable_beam_forming: 0
+  enable_cplane_worker_tracing: 0
+  dl_warmup_slots: 2000
+  fix_beta_dl: 1
+  payload_validation: 1
+  enable_dl_proc_mt: 0 #Enable multi-threaded processing for dl_proc (receive/process)
+  aerial_fh_txq_size: 4096
+  aerial_fh_rxq_size: 2048
+  aerial_fh_tx_request_num: 32
+  aerial_fh_dpdk_thread: 1
+  aerial_fh_pdump_client_thread: -1
+  aerial_fh_accu_tx_sched_res_ns: 500 #Flag applicable only for CX6-DX : BF3/CX7 HW and beyond support accurate send scheduling directly on timestamp, for CX6-DX this is implemented via software emulation
+  aerial_fh_dpdk_file_prefix: "ru_emulator"
+  aerial_fh_per_rxq_mempool : 0
+  aerial_fh_cpu_mbuf_pool_size: 32768 #Applies only if aerial_fh_per_rxq_mempool is set to 1
+  aerial_fh_cpu_mbuf_pool_tx_size: 262144 #Applies to rx as well if aerial_fh_per_rxq_mempool is set to 0
+  aerial_fh_split_rx_tx_mempool: 0
+  aerial_fh_mtu: 1514
+  debug_u_plane_prints: 0
+  debug_u_plane_threshold: 20
+  oran_timing_info:
+    dl_c_plane_timing_delay: 470
+    dl_c_plane_window_size: 51
+    ul_c_plane_timing_delay: 336
+    ul_c_plane_window_size: 51
+    dl_u_plane_timing_delay: 345
+    dl_u_plane_window_size: 51
+    ul_u_plane_tx_offset: 231
+    ul_u_plane_tx_offset_srs: 231
+  oran_beam_id_info: {static_beam_id_start: 1, static_beam_id_end: 16527, dynamic_beam_id_start: 16528, dynamic_beam_id_end: 65535}
+  ecpri_hdr_cfg_test: {enable: 0, ecpri_hdr_cfg_file: ecpri_hdr_cfg.yaml}
+  

@@ -194,8 +194,8 @@ def build_model(jobs, configs, slot_minutes=10.0, delta=0.0, init_config="111111
     pmin = {j: jobs[j]["p"]     for j in J}
     d    = {j: int(math.ceil(pmin[j] / slot_minutes)) for j in J}
 
-    # 시간 수 T: 보수적 상한 (모든 d 합)
-    T = sum(d.values())
+    # 시간 수 T: 보수적 상한 (모든 d 합), 성능을 위해 상한 제한
+    T = min(sum(d.values()), max(d.values()) + len(J) + 3)
     C = list(configs.keys())
 
     m = pl.LpProblem("MIG_dynamic_partitioning", pl.LpMinimize)
@@ -382,8 +382,8 @@ def solve_k_best(k, jobs_norm, configs, slot_minutes, delta, init_config):
     sols = []
     m, data, vars = build_model(jobs_norm, configs, slot_minutes, delta, init_config)
     for _ in range(k):
-        m.solve(pl.PULP_CBC_CMD(msg=False))
-        if pl.LpStatus[m.status] != "Optimal":
+        m.solve(pl.PULP_CBC_CMD(msg=False, timeLimit=30))
+        if m.status != 1:  # not optimal/feasible
             break
         sol = extract_solution(m, data, vars)
         sols.append(sol)

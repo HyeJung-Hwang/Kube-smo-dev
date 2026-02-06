@@ -1,0 +1,69 @@
+# values.yaml
+
+# -- Server
+nodeName: ""
+# gpuResource: nvidia.com/mig-3g.48gb
+gpuResource: nvidia.com/gpu
+
+
+# -- vLLM 추론 서버 설정
+server:
+  replicas: 1
+  sysImage:
+    repository: "us-docker.pkg.dev/vertex-ai/vertex-vision-model-garden-dockers/pytorch-vllm-serve"
+    tag: "latest"
+  arsImage:
+    repository: "localhost:5000/vllm-gh200-openai"
+    tag: "latest"
+
+  modelId: ""
+  modelPath: "/root/.cache/huggingface/hub/models--meta-llama--Llama-3.2-1B-Instruct"
+
+  # -- 모델 로딩을 위한 Hugging Face 토큰을 담은 Secret 설정
+  hfTokenSecret:
+    name: "hf-secret"
+    key: "hf_api_token"
+
+  # -- GPU 텐서 병렬 처리 크기
+  tensorParallelSize: 1
+
+  # -- 서버 리소스 요청 및 제한 설정
+  resources:
+    requests:
+      cpu: "1"
+      memory: "16Gi"
+    limits:
+      cpu: "4"
+      memory: "32Gi"
+
+  # -- 특정 GPU 노드를 선택하기 위한 nodeSelector
+  # nodeSelector:
+  #   nvidia.com/cuda.driver.major: "560"
+
+
+  service:
+    type: "ClusterIP"
+    port: 8000
+
+# -- 벤치마크 설정
+benchmark:
+  numPrompts: 100000
+  outputLen: 100
+
+# -- Hugging Face API 토큰을 저장할 Secret 설정
+secret:
+  # -- Secret 활성화 여부
+  enabled: true
+  hfApiToken: ""
+
+# -- 모델 캐시 등을 위한 PersistentVolumeClaim 설정
+pvc:
+  # -- PVC 활성화 여부
+  enabled: false # 필요 시 true로 변경
+  # -- PVC에 요청할 스토리지 크기
+  storage: "50Gi"
+  # -- 사용할 스토리지 클래스 이름
+  storageClassName: "default"
+  # -- 접근 모드 (ReadWriteOnce, ReadOnlyMany, ReadWriteMany)
+  accessModes:
+  - "ReadWriteOnce"

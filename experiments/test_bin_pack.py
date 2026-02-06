@@ -132,15 +132,16 @@ class BinPackScheduler(EndpointScheduler):
         return result
 
     def handle_arrival(self, job):
-        # 메트릭 측정등으 위함
-        self.job_states[job.job_id] = JobState(
-            job_id=job.job_id,
-            original_duration=job.duration,
-            remaining_duration=job.duration,
-            job_type=job.job_type,
-            workload_type=getattr(job, 'workload_type', 'AI'),
-            submit_time=self.current_time
-        )
+        # 메트릭 측정등을 위함 — 최초 도착 시에만 JobState 생성 (re-queue 시 submit_time 보존)
+        if job.job_id not in self.job_states:
+            self.job_states[job.job_id] = JobState(
+                job_id=job.job_id,
+                original_duration=job.duration,
+                remaining_duration=job.duration,
+                job_type=job.job_type,
+                workload_type=getattr(job, 'workload_type', 'AI'),
+                submit_time=self.current_time
+            )
         # 배포할 노드 , GPU, 인스턴스 결정 [1~4]
         N = job.req
         # 1. 배포 대상이 되는 노드 리스트 결정 (Job Type에 따라 다름)
@@ -179,58 +180,105 @@ class BinPackScheduler(EndpointScheduler):
                 sizes = [s['size'] for s in slices]
                 print(f"  {node.name} GPU{node.gpu_index}: free_slices={sizes} (total_free={sum(sizes)}g)")
 
-        # 3. candidate 중에서 N 이 free slice size에 있는 경우 중에 총 빈공간이 가장 작은 노드 선택
+        # 3. Placement strategy에 따라 노드/슬라이스 선택
         best_node = None
         best_slice = None
-        candidate_with_exact_fit = [
+        strategy = getattr(self, 'placement_strategy', 'best_fit')
+
+        # 배치 가능한 candidate 필터링
+        candidate_with_fit = [
             (node, slices) for node, slices in candidate_list
-            if any(s['size'] == N for s in slices)
+            if any(s['size'] >= N for s in slices)
         ]
-        if candidate_with_exact_fit:
-            print(f"[BinPack] Exact fit ({N}g) found in {len(candidate_with_exact_fit)} nodes:")
-            for node, slices in candidate_with_exact_fit:
-                total_free = sum(s['size'] for s in slices)
-                print(f"  {node.name} GPU{node.gpu_index}: free={total_free}g, waste={total_free - N}g")
 
-            best_node, _ = min(
-                candidate_with_exact_fit,
-                key=lambda x: sum(s['size'] for s in x[1]) - N
-            )
-            # migration은 occupied slice도 선택 가능 (preempt)
-            is_migration = (job.job_type == "migration")
-            slice_list = best_node.get_all_slice_list() if is_migration else best_node.get_free_slice_list()
-            best_slice = next(s for s in slice_list if s['size'] == N)
+        if candidate_with_fit:
+            if strategy == 'best_fit':
+                # Best-Fit: exact fit 우선, 없으면 min waste
+                candidate_with_exact_fit = [
+                    (node, slices) for node, slices in candidate_with_fit
+                    if any(s['size'] == N for s in slices)
+                ]
+                if candidate_with_exact_fit:
+                    print(f"[BinPack] Exact fit ({N}g) found in {len(candidate_with_exact_fit)} nodes:")
+                    for node, slices in candidate_with_exact_fit:
+                        total_free = sum(s['size'] for s in slices)
+                        print(f"  {node.name} GPU{node.gpu_index}: free={total_free}g, waste={total_free - N}g")
+                    best_node, _ = min(
+                        candidate_with_exact_fit,
+                        key=lambda x: sum(s['size'] for s in x[1]) - N
+                    )
+                    is_migration = (job.job_type == "migration")
+                    slice_list = best_node.get_all_slice_list() if is_migration else best_node.get_free_slice_list()
+                    best_slice = next(s for s in slice_list if s['size'] == N)
+                    print(f"[BinPack] Selected: {best_node.name} GPU{best_node.gpu_index} "
+                          f"slice[{best_slice['id']}] ({best_slice['size']}g) -- exact fit")
+                else:
+                    print(f"[BinPack] No exact fit. Larger fit (>={N}g) in {len(candidate_with_fit)} nodes:")
+                    for node, slices in candidate_with_fit:
+                        fits = [s['size'] for s in slices if s['size'] >= N]
+                        min_waste = min(s - N for s in fits)
+                        print(f"  {node.name} GPU{node.gpu_index}: fits={fits}, min_waste={min_waste}g")
+                    best_node, _ = min(
+                        candidate_with_fit,
+                        key=lambda x: min(s['size'] - N for s in x[1] if s['size'] >= N)
+                    )
+                    is_migration = (job.job_type == "migration")
+                    slice_list = best_node.get_all_slice_list() if is_migration else best_node.get_free_slice_list()
+                    best_slice = min(
+                        (s for s in slice_list if s['size'] >= N),
+                        key=lambda s: s['size'] - N
+                    )
+                    print(f"[BinPack] Selected: {best_node.name} GPU{best_node.gpu_index} "
+                          f"slice[{best_slice['id']}] ({best_slice['size']}g) -- waste={best_slice['size'] - N}g")
 
-            print(f"[BinPack] Selected: {best_node.name} GPU{best_node.gpu_index} "
-                  f"slice[{best_slice['id']}] ({best_slice['size']}g) -- exact fit")
+            elif strategy == 'least_allocated':
+                # Least Allocated (K8s default): exact fit만 허용, 빈 공간이 가장 많은 노드
+                # K8s는 mig-1g.12gb 요청하면 1g 슬롯에만 배치됨 (3g에 배치 안됨)
+                candidate_with_exact = [
+                    (node, slices) for node, slices in candidate_with_fit
+                    if any(s['size'] == N for s in slices)
+                ]
+                if candidate_with_exact:
+                    best_node, _ = max(
+                        candidate_with_exact,
+                        key=lambda x: sum(s['size'] for s in x[1])
+                    )
+                    is_migration = (job.job_type == "migration")
+                    slice_list = best_node.get_all_slice_list() if is_migration else best_node.get_free_slice_list()
+                    best_slice = next(s for s in slice_list if s['size'] == N)
+                    total_free = sum(s['size'] for s in best_node.get_free_slice_list())
+                    print(f"[LeastAlloc] Selected: {best_node.name} GPU{best_node.gpu_index} "
+                          f"slice[{best_slice['id']}] ({best_slice['size']}g) -- node_free={total_free}g")
+                else:
+                    # exact fit 없음 → 배치 불가 (K8s처럼 Pending)
+                    best_node = None
+                    best_slice = None
+                    print(f"[LeastAlloc] No exact {N}g slot available")
 
+            elif strategy == 'most_allocated':
+                # Most Allocated: exact fit만 허용, 빈 공간이 가장 적은 노드
+                candidate_with_exact = [
+                    (node, slices) for node, slices in candidate_with_fit
+                    if any(s['size'] == N for s in slices)
+                ]
+                if candidate_with_exact:
+                    best_node, _ = min(
+                        candidate_with_exact,
+                        key=lambda x: sum(s['size'] for s in x[1])
+                    )
+                    is_migration = (job.job_type == "migration")
+                    slice_list = best_node.get_all_slice_list() if is_migration else best_node.get_free_slice_list()
+                    best_slice = next(s for s in slice_list if s['size'] == N)
+                    total_free = sum(s['size'] for s in best_node.get_free_slice_list())
+                    print(f"[MostAlloc] Selected: {best_node.name} GPU{best_node.gpu_index} "
+                          f"slice[{best_slice['id']}] ({best_slice['size']}g) -- node_free={total_free}g")
+                else:
+                    # exact fit 없음 → 배치 불가
+                    best_node = None
+                    best_slice = None
+                    print(f"[MostAlloc] No exact {N}g slot available")
         else:
-            candidate_with_larger_fit = [
-                (node, slices) for node, slices in candidate_list
-                if any(s['size'] >= N for s in slices)
-            ]
-            if candidate_with_larger_fit:
-                print(f"[BinPack] No exact fit. Larger fit (>={N}g) in {len(candidate_with_larger_fit)} nodes:")
-                for node, slices in candidate_with_larger_fit:
-                    fits = [s['size'] for s in slices if s['size'] >= N]
-                    min_waste = min(s - N for s in fits)
-                    print(f"  {node.name} GPU{node.gpu_index}: fits={fits}, min_waste={min_waste}g")
-
-                best_node, _ = min(
-                    candidate_with_larger_fit,
-                    key=lambda x: min(s['size'] - N for s in x[1] if s['size'] >= N)
-                )
-                is_migration = (job.job_type == "migration")
-                slice_list = best_node.get_all_slice_list() if is_migration else best_node.get_free_slice_list()
-                best_slice = min(
-                    (s for s in slice_list if s['size'] >= N),
-                    key=lambda s: s['size'] - N
-                )
-
-                print(f"[BinPack] Selected: {best_node.name} GPU{best_node.gpu_index} "
-                      f"slice[{best_slice['id']}] ({best_slice['size']}g) -- waste={best_slice['size'] - N}g")
-            else:
-                print(f"[BinPack] No node can fit {N}g")
+            print(f"[BinPack] No node can fit {N}g")
 
         # 4. best_node에 job 배포/ best node 없는 경우 다시 큐잉
         if best_node is None:
@@ -242,9 +290,15 @@ class BinPackScheduler(EndpointScheduler):
                     self._hp_preempt_with_ilp(job, target_node)
                     return
 
-            logger.info(f"No suitable node found for job {job.job_id} ({job.req}g). Re-queuing.")
+            # 다음 completion 직후에 재시도 (+1초로 completion이 먼저 처리되도록 보장)
+            next_completion = min(
+                (e.time for e in self.event_queue
+                 if e.event_type == 'completion' and not e.cancelled),
+                default=self.current_time + 60
+            )
+            retry_time = next_completion + 1
             arrival_event = Event(
-                time=self.current_time + 1,
+                time=retry_time,
                 event_type='arrival',
                 job=job
             )
@@ -509,9 +563,9 @@ class BinPackScheduler(EndpointScheduler):
             heapq.heappush(self.event_queue, Event(time=job.end_time, event_type='completion', job=job))
 
             # Step 1: Deactivate Source Cells (cmd 0)
-            print(f"[RAN-Migration] Step 1: Deactivate src cells on {src_pod}")
+            # print(f"[RAN-Migration] Step 1: Deactivate src cells on {src_pod}")
             src_ip = "127.0.0.2"
-            self._run_cell_cmd(src_pod, container, src_ip, src_port, src_cells, cmd_id=0)
+            # self._run_cell_cmd(src_pod, container, src_ip, src_port, src_cells, cmd_id=0)
 
             # delay 에상
             # Step 2: Helm Install Dst Pod
@@ -519,7 +573,7 @@ class BinPackScheduler(EndpointScheduler):
             gpu_resource = deploy.get_gpu_resource(target_slice['size'], node.name)
             script_dir = os.path.dirname(os.path.abspath(__file__))
             repo_root = os.path.dirname(script_dir)
-            helm_chart = os.path.join(repo_root, "workload", "heng", dst_pod)
+            helm_chart = os.path.join(repo_root, "workload", dst_pod) # 백업 버전으로 테스트 
             dst_metrics_port = RAN_METRICS_PORT_MAP.get(dst_pod, 8086)
             dst_oam_port = RAN_IP_PORT_MAP.get(dst_pod, 50053)
             helm_cmd = [
@@ -571,11 +625,11 @@ class BinPackScheduler(EndpointScheduler):
             time.sleep(20)
 
             # Step 6: Turn off Traffic on Src Pod (cmd 0)
-            # print(f"[RAN-Migration] Step 6: Deactivate src cells on {src_pod}")
-            # self._run_cell_cmd(src_pod, container, src_ip, src_port, src_cells, cmd_id=0)
-            # t0 = time.time()
-            # elapsed = time.time() - t0
-            # print(f"[RAN-Migration] Step 6→7 sleep: {elapsed:.3f}s")
+            print(f"[RAN-Migration] Step 6: Deactivate src cells on {src_pod}")
+            self._run_cell_cmd(src_pod, container, src_ip, src_port, src_cells, cmd_id=0)
+            t0 = time.time()
+            elapsed = time.time() - t0
+            print(f"[RAN-Migration] Step 6→7 sleep: {elapsed:.3f}s")
 
             # Step 7: Configure Destination Cells (cmd 3)
             print(f"[RAN-Migration] Step 7: Configure dst cells on {dst_pod}")
@@ -631,6 +685,12 @@ class BinPackScheduler(EndpointScheduler):
         if job.job_id in self.job_to_node:
             completed_node = self.job_to_node[job.job_id]
 
+        # 중복 완료 방지: 이미 완료된 job이면 early return
+        already_completed = job.job_id in {j.job_id for j in self.completed_jobs}
+        if already_completed:
+            # 이미 완료된 job의 stale completion event → 무시
+            return
+
         if job.job_id in self.running_jobs:
             if job.job_id in self.job_states:
                 self.update_job_state_on_completion(job.job_id, self.current_time)
@@ -648,9 +708,16 @@ class BinPackScheduler(EndpointScheduler):
                 if not deploy.wait_for_pod_deletion([job.job_id], max_wait_sec=60):
                     print(f"    Warning: Pod {job.job_id} may still be running!")
 
-        self.completed_jobs.append(job)
-        self.total_jct += job.jct()
-        self.total_wait_time += job.wait_time()
+        # Snapshot completion_time in job_states (immune to Job object aliasing)
+        # Set even if not in running_jobs — ILP may have removed it but the event still fires
+        if job.job_id in self.job_states and self.job_states[job.job_id].completion_time is None:
+            self.job_states[job.job_id].completion_time = self.current_time
+
+        # Add to completed_jobs (duplicate check already done above)
+        if job.job_id not in {j.job_id for j in self.completed_jobs}:
+            self.completed_jobs.append(job)
+            self.total_jct += job.jct()
+            self.total_wait_time += job.wait_time()
 
         time_str = self.format_time(self.current_time)
         if completed_node:
@@ -661,6 +728,11 @@ class BinPackScheduler(EndpointScheduler):
 
         # BinPack 고유 로직: 빈 슬라이스에 대기 Job 우선 배치 → Consolidation
         if completed_node:
+            # Slot plan이 활성화된 경우: 조기 slot 전환 체크
+            if completed_node.current_plan is not None:
+                self.check_slot_transition(completed_node)
+                return
+
             # freed_slice 식별 (deallocate 후 비어있는 슬라이스)
             freed_slices = [s for s in completed_node.slices if len(s['jobs']) == 0]
 
@@ -886,16 +958,16 @@ class BinPackScheduler(EndpointScheduler):
         return best_node
 
     def _hp_preempt_with_ilp(self, hp_job, node):
-        """HP-AI deploy를 위해 노드의 모든 job을 중지 → ILP → reconfig → 재배포
+        """HP-AI deploy를 위해 노드의 모든 job을 중지 → ILP → slot plan 기반 재배포
 
-        MIG 특성상 모든 job을 끄면 100% 원하는 프로파일로 reconfig 가능.
+        기존 realtime_slot_scheduler의 slot 메커니즘을 활용하여
+        ILP의 multi-slot reconfig 계획을 실제로 실행한다.
         """
         from bin_pack import run_bin_pack
 
-        print(f"\n{'='*60}")
-        print(f"  [ILP-Preempt] HP-AI deploy {hp_job.job_id} ({hp_job.req}g)")
-        print(f"  [ILP-Preempt] Target: {node.name} GPU{node.gpu_index}")
-        print(f"{'='*60}")
+        log_header = f"\n{'='*60}\n  [ILP-Preempt] HP-AI deploy {hp_job.job_id} ({hp_job.req}g)\n  [ILP-Preempt] Target: {node.name} GPU{node.gpu_index}\n  [ILP-Preempt] Before profile: {node.mig_profile}\n  [ILP-Preempt] Before slices: {node.get_slice_info()}\n{'='*60}"
+        print(log_header)
+        logger.info(log_header)
 
         # 1. Save: 현재 노드의 모든 running jobs
         running_hp_jobs = list(node.hp_running_jobs)
@@ -903,8 +975,20 @@ class BinPackScheduler(EndpointScheduler):
         all_running = running_hp_jobs + running_spot_jobs
         all_running_ids = [j.job_id for j in all_running]
 
-        print(f"  [ILP-Preempt] Running HP: {[j.job_id for j in running_hp_jobs]}")
-        print(f"  [ILP-Preempt] Running Spot: {[j.job_id for j in running_spot_jobs]}")
+        log_running = f"  [ILP-Preempt] Running HP: {[j.job_id for j in running_hp_jobs]}\n  [ILP-Preempt] Running Spot: {[j.job_id for j in running_spot_jobs]}"
+        print(log_running)
+        logger.info(log_running)
+
+        # 1.5 기존 spot_waiting_queue flush → arrival 이벤트로 re-queue
+        # (새 plan이 old plan을 덮어쓰므로, old plan의 waiting job들이 stuck되는 것을 방지)
+        if node.spot_waiting_queue:
+            orphan_jobs = list(node.spot_waiting_queue)
+            node.spot_waiting_queue.clear()
+            print(f"  [ILP-Preempt] Re-queuing {len(orphan_jobs)} orphaned waiting jobs")
+            for j in orphan_jobs:
+                if j.job_id not in all_running_ids and j.job_id != hp_job.job_id:
+                    requeue_event = Event(time=self.current_time + 1, event_type='arrival', job=j)
+                    heapq.heappush(self.event_queue, requeue_event)
 
         # 2. Calculate remaining_duration
         if not self.dry_run:
@@ -951,6 +1035,7 @@ class BinPackScheduler(EndpointScheduler):
             s['jobs'].clear()
 
         # 4. ILP 호출: 전체 7g available, 모든 job 포함
+        slot_minutes = 30  # HP preemption은 빠른 계획 필요 → 큰 slot
         all_jobs_for_ilp = running_spot_jobs + running_hp_jobs + [hp_job]
         ilp_job_list = []
         for j in all_jobs_for_ilp:
@@ -960,65 +1045,186 @@ class BinPackScheduler(EndpointScheduler):
                 dur = job_remaining.get(j.job_id, j.duration)
             ilp_job_list.append({"name": j.job_id, "size": j.req, "duration": dur})
 
-        print(f"  [ILP-Preempt] ILP input: {len(ilp_job_list)} jobs")
+        # HP job 이름 수집 (ILP에서 HP 우선 배치용)
+        hp_job_names = {hp_job.job_id} | {j.job_id for j in running_hp_jobs}
+
+        ilp_input_log = f"  [ILP-Preempt] ILP input: {len(ilp_job_list)} jobs (HP: {len(hp_job_names)})\n"
         for jd in ilp_job_list:
-            print(f"    {jd['name']}: {jd['size']}g, {jd['duration']:.1f}min")
+            is_hp = jd['name'] in hp_job_names
+            hp_mark = " [HP]" if is_hp else ""
+            ilp_input_log += f"    {jd['name']}: {jd['size']}g, {jd['duration']:.1f}min{hp_mark}\n"
+        print(ilp_input_log.rstrip())
+        logger.info(ilp_input_log.rstrip())
 
         ilp_result = None
         try:
             ilp_result = run_bin_pack(
                 init_config="1111111",
                 job_list=ilp_job_list,
-                slot_minutes=10,
+                slot_minutes=slot_minutes,
                 dry_run=True,  # ILP는 항상 static config 사용
+                hp_job_names=hp_job_names,  # HP 우선 배치
             )
         except Exception as e:
             print(f"  [ILP-Preempt] ILP failed: {e}")
 
-        # 5. Determine new profile (ILP uses 1-based slot indices)
-        if ilp_result and 'chosen_cfg' in ilp_result and ilp_result['chosen_cfg']:
-            new_profile = ilp_result['chosen_cfg'].get(1, ilp_result['chosen_cfg'].get(0, ""))
-            slot_jobs_map = ilp_result.get('slot_jobs', {})
-            slot_1_jobs = slot_jobs_map.get(1, slot_jobs_map.get(0, []))
-            print(f"  [ILP-Preempt] ILP chose profile: {new_profile}")
-            print(f"  [ILP-Preempt] Slot 1 jobs: {slot_1_jobs}")
-        else:
+        # 5. ILP 결과 처리
+        if not (ilp_result and 'chosen_cfg' in ilp_result and ilp_result['chosen_cfg']):
             # Fallback: HP job의 req 크기와 나머지를 1g로 채움
             hp_size = hp_job.req
-            remaining = 7 - hp_size
-            new_profile = str(hp_size) + "1" * remaining
-            slot_0_jobs = [hp_job.job_id]
+            remaining_g = 7 - hp_size
+            new_profile = str(hp_size) + "1" * remaining_g
             print(f"  [ILP-Preempt] ILP failed, fallback profile: {new_profile}")
 
-        # 6. Reconfig
-        print(f"  [ILP-Preempt] Reconfiguring to: {new_profile}")
+            if not self.dry_run:
+                success = deploy.hard_reconfigure_mig(node.name, node.gpu_index, new_profile)
+                if not success:
+                    print(f"  [ILP-Preempt] Reconfig failed!")
+                    return
+            node.reconfigure(new_profile)
+
+            # HP만 배치, Spot은 다음 completion 시점에 재시도
+            self._deploy_hp_jobs_manual([hp_job] + running_hp_jobs, job_remaining, node, current_time)
+
+            # Spot jobs: 다음 completion 시점에 재큐잉 (무한루프 방지)
+            next_completion = min(
+                (e.time for e in self.event_queue if e.event_type == 'completion' and not e.cancelled),
+                default=current_time + 60
+            )
+            for j in running_spot_jobs:
+                j.start_time = None
+                j.end_time = None
+                j.job_type = "deploy"
+                j.duration = job_remaining.get(j.job_id, j.duration)
+                requeue_event = Event(time=next_completion, event_type='arrival', job=j)
+                heapq.heappush(self.event_queue, requeue_event)
+                print(f"  [ILP-Preempt] Re-queued Spot {j.job_id} at t={next_completion:.0f}s")
+            return
+
+        chosen_cfg = ilp_result['chosen_cfg']
+        slot_jobs_map = ilp_result.get('slot_jobs', {})
+        reconfigs = ilp_result.get('reconfigs', [])
+        tmax_slot = ilp_result.get('Tmax_slot', len(chosen_cfg))
+
+        # 6. 첫 slot의 full profile로 reconfig
+        before_profile = node.mig_profile
+        first_profile = chosen_cfg.get(1, chosen_cfg.get(0, ""))
+        reconfig_log = f"  [ILP-Preempt] Reconfiguring: {before_profile} → {first_profile}"
+        print(reconfig_log)
+        logger.info(reconfig_log)
         if not self.dry_run:
-            success = deploy.hard_reconfigure_mig(node.name, node.gpu_index, new_profile)
+            success = deploy.hard_reconfigure_mig(node.name, node.gpu_index, first_profile)
             if not success:
                 print(f"  [ILP-Preempt] Reconfig failed! Reverting...")
                 return
-        node.reconfigure(new_profile)
-        node.hp_running_jobs.clear()
-        node.spot_running_jobs.clear()
+        node.reconfigure(first_profile)
 
-        # 7. Redeploy ALL
-        # HP job(s) 먼저 (새 HP-AI + 기존 HP)
-        hp_to_deploy = [hp_job] + running_hp_jobs
-        spot_to_deploy = list(running_spot_jobs)
+        # 7. Slot-1 HP jobs vs Later-slot HP jobs 구분
+        all_hp_jobs = [hp_job] + running_hp_jobs
+        all_hp_job_ids = {j.job_id for j in all_hp_jobs}
+        slot1_job_ids = set(slot_jobs_map.get(1, []))
+        hp_slot1_ids = all_hp_job_ids & slot1_job_ids
+        hp_later_ids = all_hp_job_ids - hp_slot1_ids
 
-        # Job state 생성 (새 HP job)
-        if hp_job.job_id not in self.job_states:
-            self.job_states[hp_job.job_id] = JobState(
-                job_id=hp_job.job_id,
-                original_duration=hp_job.duration,
-                remaining_duration=hp_job.duration,
-                job_type=hp_job.job_type,
-                workload_type=getattr(hp_job, 'workload_type', 'AI'),
-                submit_time=current_time
+        hp_slot1_jobs = [j for j in all_hp_jobs if j.job_id in hp_slot1_ids]
+        hp_later_jobs = [j for j in all_hp_jobs if j.job_id in hp_later_ids]
+
+        print(f"  [ILP-Preempt] HP slot-1: {[j.job_id for j in hp_slot1_jobs]}")
+        if hp_later_jobs:
+            print(f"  [ILP-Preempt] HP later-slot: {[j.job_id for j in hp_later_jobs]}")
+
+        # 8. Slot-1 HP jobs 즉시 배치
+        self._deploy_hp_jobs_manual(hp_slot1_jobs, job_remaining, node, current_time)
+
+        # 9. Later-slot HP jobs → spot_waiting_queue (deploy 타입으로 변환)
+        for j in hp_later_jobs:
+            j.start_time = None
+            j.end_time = None
+            j.job_type = "deploy"
+            j.duration = job_remaining.get(j.job_id, j.duration)
+            node.spot_waiting_queue.append(j)
+
+        # 10. Spot jobs → spot_waiting_queue에 넣기
+        for j in running_spot_jobs:
+            j.start_time = None
+            j.end_time = None
+            j.job_type = "deploy"
+            j.duration = job_remaining.get(j.job_id, j.duration)
+            node.spot_waiting_queue.append(j)
+
+        # 11. Spot-only plan 생성 (slot-1 HP만 제거, later-slot HP는 유지)
+        spot_chosen_cfg = {}
+        for t, cfg in chosen_cfg.items():
+            # Slot-1 HP 중 이 slot에서 아직 active한 것만 strip
+            active_hp_at_t = [j for j in hp_slot1_jobs if j.job_id in slot_jobs_map.get(t, [])]
+            spot_chosen_cfg[t] = self._strip_hp_from_profile(cfg, active_hp_at_t)
+
+        spot_slot_jobs = {}
+        for t, jobs_list in slot_jobs_map.items():
+            # Slot-1 HP만 제외 (이미 수동 배치됨), later-slot HP와 Spot은 유지
+            spot_slot_jobs[t] = [jid for jid in jobs_list if jid not in hp_slot1_ids]
+
+        # Slot 1은 이미 reconfig 했으므로 제거
+        adjusted_reconfigs = [r for r in reconfigs if r != 1]
+
+        plan = {
+            'status': ilp_result.get('status', 'Optimal'),
+            'chosen_cfg': spot_chosen_cfg,
+            'slot_jobs': spot_slot_jobs,
+            'reconfigs': adjusted_reconfigs,
+            'Tmax_slot': tmax_slot,
+            'reserved_profile': None,
+            'cleanup_mode': False,
+        }
+
+        node.current_plan = plan
+        node.current_slot = 1
+        node.plan_start_time = current_time
+
+        slot_plan_log = f"  [ILP-Preempt] Slot plan created: Tmax={tmax_slot}, reconfigs={adjusted_reconfigs}\n"
+        for t in range(1, min(tmax_slot + 1, 4)):
+            slot_plan_log += f"    Slot {t}: profile={spot_chosen_cfg.get(t, '?')}, jobs={spot_slot_jobs.get(t, [])}\n"
+        if tmax_slot > 3:
+            slot_plan_log += f"    ... ({tmax_slot - 3} more slots)\n"
+        print(slot_plan_log.rstrip())
+        logger.info(slot_plan_log.rstrip())
+
+        # 12. Slot timeout 이벤트 스케줄링
+        slot_duration_sec = slot_minutes * 60
+        for slot_idx in range(1, tmax_slot + 1):
+            timeout_time = node.plan_start_time + slot_idx * slot_duration_sec
+            timeout_event = Event(
+                time=timeout_time,
+                event_type='slot_timeout',
+                job=None,
+                node=node,
+                slot_idx=slot_idx,
+                plan=plan,
             )
+            heapq.heappush(self.event_queue, timeout_event)
 
-        for j in hp_to_deploy:
-            # 수동 best-fit 배치 (allocate_job은 waiting_queue 의존하므로 사용 안함)
+        # 13. 첫 slot의 Spot 배포 (기존 slot 메커니즘 활용)
+        self._execute_current_slot(node)
+
+        done_log = f"  [ILP-Preempt] Done. Profile: {node.mig_profile}\n  [ILP-Preempt] {node.get_slice_info()}"
+        print(done_log)
+        logger.info(done_log)
+
+    def _deploy_hp_jobs_manual(self, hp_jobs_to_deploy, job_remaining, node, current_time):
+        """HP jobs를 수동 best-fit으로 배치 (slot plan과 독립적으로 유지)"""
+        # Job state 생성 (없는 경우)
+        for j in hp_jobs_to_deploy:
+            if j.job_id not in self.job_states:
+                self.job_states[j.job_id] = JobState(
+                    job_id=j.job_id,
+                    original_duration=j.duration,
+                    remaining_duration=j.duration,
+                    job_type=j.job_type,
+                    workload_type=getattr(j, 'workload_type', 'AI'),
+                    submit_time=current_time
+                )
+
+        for j in hp_jobs_to_deploy:
             best_slice = None
             min_waste = float('inf')
             for s in node.slices:
@@ -1063,67 +1269,44 @@ class BinPackScheduler(EndpointScheduler):
 
             print(f"  [ILP-Preempt] Deployed HP {j.job_id} ({j.req}g)")
 
-        # Spot jobs 배치 (ILP plan에 있는 것 우선)
-        deployed_spot_ids = set()
-        for j in spot_to_deploy:
-            if node.can_allocate(j.req):
-                # allocate_job은 waiting_queue에서 제거하려고 하므로 수동 배치
-                best_slice = None
-                min_waste = float('inf')
-                for s in node.slices:
-                    if len(s['jobs']) == 0 and s['size'] >= j.req:
-                        waste = s['size'] - j.req
-                        if waste < min_waste:
-                            min_waste = waste
-                            best_slice = s
+    @staticmethod
+    def _strip_hp_from_profile(full_profile, hp_jobs):
+        """ILP full profile에서 HP가 차지하는 슬라이스를 제거하여 Spot-only profile 반환
 
-                if best_slice:
-                    best_slice['used'] = j.req
-                    best_slice['jobs'].append(j.job_id)
-                    j.allocated_size = best_slice['size']
-                    node.spot_running_jobs.append(j)
+        예: full_profile="31111", hp_jobs=[Job(req=1)] → "3111"
+            full_profile="2221", hp_jobs=[Job(req=2)] → "21" (X) → "221" (제거 1개)
+        """
+        chars = list(full_profile)
+        for j in hp_jobs:
+            size_char = str(j.req)
+            if size_char in chars:
+                chars.remove(size_char)
+        return "".join(chars)
 
-                    remaining_dur = job_remaining.get(j.job_id, j.duration)
-                    j.start_time = current_time
-                    j.duration = remaining_dur
-                    j.end_time = current_time + (remaining_dur * 60)
+    def handle_slot_timeout(self, event):
+        """Slot timeout 처리 + plan 종료 시 spot_waiting_queue 재큐잉"""
+        super().handle_slot_timeout(event)
 
-                    if j.job_id in self.job_states:
-                        self.job_states[j.job_id].actual_start_time = current_time
-
-                    self.running_jobs[j.job_id] = j
-                    self.job_to_node[j.job_id] = node
-
-                    heapq.heappush(self.event_queue, Event(time=j.end_time, event_type='completion', job=j))
-
-                    if not self.dry_run:
-                        mig_uuid = deploy.deploy_job(
-                            job=j, node_name=node.name,
-                            gpu_g=best_slice['size'],
-                            gpu_index=node.gpu_index,
-                            slice_index=best_slice['id'],
-                            size_index=self._compute_size_index(node, best_slice),
-                        )
-                        if mig_uuid:
-                            j.mig_uuid = mig_uuid
-
-                    deployed_spot_ids.add(j.job_id)
-                    print(f"  [ILP-Preempt] Re-deployed Spot {j.job_id} ({j.req}g)")
-
-        # 배치 못한 Spot job은 re-queue
-        for j in spot_to_deploy:
-            if j.job_id not in deployed_spot_ids:
-                j.start_time = None
-                j.end_time = None
-                j.job_type = "deploy"
-                remaining_dur = job_remaining.get(j.job_id, j.duration)
-                j.duration = remaining_dur
-                requeue_event = Event(time=current_time, event_type='arrival', job=j)
+        # Plan 종료 후 spot_waiting_queue에 남은 job들을 arrival 이벤트로 복구
+        node = event.node
+        if node.current_plan is None and len(node.spot_waiting_queue) > 0:
+            print(f"  [ILP-Preempt] Plan finished, re-queuing {len(node.spot_waiting_queue)} Spot jobs")
+            for j in list(node.spot_waiting_queue):
+                node.spot_waiting_queue.remove(j)
+                requeue_event = Event(time=self.current_time, event_type='arrival', job=j)
                 heapq.heappush(self.event_queue, requeue_event)
-                print(f"  [ILP-Preempt] Re-queued Spot {j.job_id} ({j.req}g)")
 
-        print(f"  [ILP-Preempt] Done. Profile: {node.mig_profile}")
-        print(f"  [ILP-Preempt] {node.get_slice_info()}")
+    def check_slot_transition(self, node):
+        """Slot 전환 + plan 종료 시 spot_waiting_queue 재큐잉"""
+        super().check_slot_transition(node)
+
+        # Plan 종료 후 spot_waiting_queue에 남은 job들을 arrival 이벤트로 복구
+        if node.current_plan is None and len(node.spot_waiting_queue) > 0:
+            print(f"  [ILP-Preempt] Plan finished, re-queuing {len(node.spot_waiting_queue)} Spot jobs")
+            for j in list(node.spot_waiting_queue):
+                node.spot_waiting_queue.remove(j)
+                requeue_event = Event(time=self.current_time, event_type='arrival', job=j)
+                heapq.heappush(self.event_queue, requeue_event)
 
 
 def run_scheduler():
@@ -1322,7 +1505,8 @@ def main_endpoint():
 class SimBinPackScheduler(BinPackScheduler):
     """시뮬레이션용 BinPackScheduler (dry_run, event-driven)"""
 
-    def __init__(self, jobs, nodes, consolidation_enabled=True, ilp_replan_enabled=True):
+    def __init__(self, jobs, nodes, consolidation_enabled=True, ilp_replan_enabled=True,
+                 placement_strategy='best_fit'):
         # EndpointScheduler.__init__는 빈 job 리스트로 초기화
         super().__init__(
             nodes=nodes,
@@ -1332,6 +1516,7 @@ class SimBinPackScheduler(BinPackScheduler):
         )
         self.consolidation_enabled = consolidation_enabled
         self.ilp_replan_enabled = ilp_replan_enabled
+        self.placement_strategy = placement_strategy  # 'best_fit', 'least_allocated', 'most_allocated'
         self.start_time = jobs[0].submit_time if jobs else 0.0
 
         # Job arrival events 로드
@@ -1362,9 +1547,15 @@ class SimBinPackScheduler(BinPackScheduler):
                     del self.job_to_node[job.job_id]
                 del self.running_jobs[job.job_id]
 
-            self.completed_jobs.append(job)
-            self.total_jct += job.jct()
-            self.total_wait_time += job.wait_time()
+            # Snapshot completion_time in job_states
+            if job.job_id in self.job_states and self.job_states[job.job_id].completion_time is None:
+                self.job_states[job.job_id].completion_time = self.current_time
+
+            # Prevent duplicate completion entries
+            if job.job_id not in {j.job_id for j in self.completed_jobs}:
+                self.completed_jobs.append(job)
+                self.total_jct += job.jct()
+                self.total_wait_time += job.wait_time()
 
             time_str = self.format_time(self.current_time)
             if completed_node:
@@ -1439,6 +1630,8 @@ class SimBinPackScheduler(BinPackScheduler):
                 self.handle_arrival(event.job)
             elif event.event_type == 'completion':
                 self.handle_completion(event.job)
+            elif event.event_type == 'slot_timeout':
+                self.handle_slot_timeout(event)
 
         return self.get_metrics()
 

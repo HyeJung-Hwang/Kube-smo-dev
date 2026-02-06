@@ -1503,14 +1503,14 @@ class RealTimeSlotScheduler(Simulator):
         self._remove_completion_event(job.job_id)
 
     def _remove_completion_event(self, job_id):
-        """Event queue에서 해당 job의 completion event 취소"""
+        """Event queue에서 해당 job의 모든 active completion event 취소"""
         for event in self.event_queue:
             if (event.event_type == 'completion' and
+                not event.cancelled and
                 event.job is not None and
                 event.job.job_id == job_id):
                 event.cancelled = True  # 플래그로 표시
                 print(f"      Completion event cancelled")
-                break
 
     # -----------------------------------------
     # 헬퍼 메소드들

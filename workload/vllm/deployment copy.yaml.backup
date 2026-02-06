@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vllm.fullname" . }}
+  labels:
+    {{- include "vllm.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.server.replicas }}
+  selector:
+    matchLabels:
+      {{- include "vllm.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vllm.labels" . | nindent 8 }}
+    spec:
+      nodeName: {{ .Values.nodeName }}
+      containers:
+      - name: vllm-server
+        image: >-
+          {{- if eq .Values.nodeName "skt-6gtb-ars" }}
+            {{ .Values.server.arsImage.repository }}:{{ .Values.server.arsImage.tag }}
+          {{- else }}
+            {{ .Values.server.sysImage.repository }}:{{ .Values.server.sysImage.tag }}
+          {{- end }}
+        imagePullPolicy: Always
+        ### 수정 필요
+        command: ["/bin/sh", "-c"]
+        args: ["sleep infinity"]
+        env:
+        - name: MODEL_ID
+          value: {{ .Values.server.modelId | quote }}
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              # 'values.yaml'에 정의된 Secret 이름과 키를 사용합니다.
+              name: {{ .Values.server.hfTokenSecret.name }}
+              key: {{ .Values.server.hfTokenSecret.key }}
+        ports:
+        - name: http
+          containerPort: {{ .Values.server.service.port }}
+          protocol: TCP
+        resources:
+          limits:
+            # 'values.yaml'의 GPU 설정 값을 사용합니다.
+            {{- with .Values.server.resources.limits }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{ .Values.gpuResource }}: 1
+        volumeMounts:
+        - name: hf-cache
+            mountPath: /root/.cache/huggingface
+    volumes:     # <-- spec.containers와 같은 depth에 volumes 정의
+    - name: hf-cache
+    hostPath:
+        path: /root/.cache/huggingface        # 호스트의 캐시 디렉토리
+        type: Directory
+      # 'values.yaml'에 nodeSelector가 정의된 경우에만 이 섹션을 포함합니다.
+      # {{- with .Values.server.nodeSelector }}
+      # nodeSelector:
+      #   nvidia.com/cuda.driver.major: "560"
+      # {{- end }}

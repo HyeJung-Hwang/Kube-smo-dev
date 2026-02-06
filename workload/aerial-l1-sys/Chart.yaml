@@ -1,0 +1,6 @@
+apiVersion: v2
+appVersion: 24-1
+description: Ariel L1 Helm chart
+name: aerial-l1-sys
+type: application
+version: 0.20241.0

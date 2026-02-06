@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Chart.Name }}-configmap
+data:
+  config.yaml: |-
+    {{- if eq .Values.nodeName "skt-6gtb-ars" }}
+    {{- .Files.Get "configs/config.yaml.ars" | nindent 4 }}
+    {{- else if eq .Values.nodeName "sys-221he-tnr" }}
+    {{- .Files.Get "configs/config.yaml.sys" | nindent 4 }}
+    {{- end }}

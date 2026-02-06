@@ -1,0 +1,106 @@
+# Copyright (c) 2021-2023, NVIDIA CORPORATION.  All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without modification, are permitted
+# provided that the following conditions are met:
+#     * Redistributions of source code must retain the above copyright notice, this list of
+#       conditions and the following disclaimer.
+#     * Redistributions in binary form must reproduce the above copyright notice, this list of
+#       conditions and the following disclaimer in the documentation and/or other materials
+#       provided with the distribution.
+#     * Neither the name of the NVIDIA CORPORATION nor the names of its contributors may be used
+#       to endorse or promote products derived from this software without specific prior written
+#       permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+# IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+# FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+# BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+# OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+# STRICT LIABILITY, OR TOR (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+# --- arguments ---
+
+# --- 배포 대상 설정 ---
+nodeName: skt-6gtb-ars
+gpuResource: nvidia.com/mig-4g.47gb
+# target:
+#   env: "ars" # "ars" 또는 "sys"로 설정
+  
+#   ars:
+#     nodeName: "skt-6gtb-ars"
+#     gpuResource: "nvidia.com/mig-4g.47gb"
+#   sys:
+#     nodeName: "skt-6gtb-sys"
+#     gpuResource: "nvidia.com/gpu"
+
+# Deployment customization
+# extraSpec:
+#   nodeSelector:
+#     nvidia.com/cuda.driver.major: "560"
+
+securityContext:
+  runAsUser: 0
+  runAsGroup: 0
+
+image:
+  # repository: nvcr.io/ea-aerial-sdk/aerial
+  # name: aerial
+  repository: localhost:5000/
+  name: cubb-build
+  pullPolicy: Always
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: "25-2-FAPI-ON"
+
+# Current working directory
+aerialSDKDir: /opt/nvidia/cuBB/
+workingDir: /opt/nvidia/cuBB/build/
+
+configL1: "F08_R750"
+extraSetup: ""
+overrideRun: ""
+
+# Minimum 7 physical cores for Aerial L1 cuphycontroller_scf app.
+# 1 additional physical core if debug_worker thread is enabled.
+# 3 additional physical cores if also running Aerial L2 testMAC in the same container.
+# Multiply physical cores by 2 if running in HT mode, request is in units of logical cores.
+enableDebugWorker: 0
+cpu: "14"
+
+# 1 = deploy separate testMAC container, 0 = don't deploy separate testMAC container
+enableTestMACContainer: 1
+configMAC: "test_mac_config.yaml"
+launchPattern: "F08 1C 39"
+extraTestMACSetup: ""
+overrideTestMACRun: ""
+
+# Use 3 physical cores deploying Aerial L2 testMAC container..
+# Multiply physical cores by 2 if running in HT mode, request is in units of logical cores.
+cpuTestMAC: "6"
+
+imagePullSecrets:
+  - name: regcred
+
+extraMountPaths:
+
+extraVolumes:
+
+cell_group_num: 2
+
+service:
+  enable: true
+  type: ClusterIP
+  port: 8086        # aerial-l1-1은 8085 포트 사용
+  targetPort: 9091
+  nodePort: null
+  annotations: {}
+  loadBalancerIP: null
+
+# ServiceMonitor configuration
+serviceMonitor:
+  enabled: false
+  interval: 15s
+  additionalLabels: {}
+  relabelings: []
+  metricRelabelings: []

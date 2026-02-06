@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "vllm.fullname" . }}
+  labels:
+    {{- include "vllm.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.nodeName }}
+  nodeName: {{ .Values.nodeName }}
+  {{- end }}
+  restartPolicy: Never
+  containers:
+    - name: vllm-server
+      image: >-
+        {{- if eq .Values.nodeName "skt-6gtb-ars" }}
+          {{ .Values.server.arsImage.repository }}:{{ .Values.server.arsImage.tag }}
+        {{- else }}
+          {{ .Values.server.sysImage.repository }}:{{ .Values.server.sysImage.tag }}
+        {{- end }}
+      imagePullPolicy: IfNotPresent
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          sleep infinity
+          # vllm bench throughput \
+          #   --model {{ .Values.server.modelPath }} \
+          #   --backend vllm \
+          #   --dataset-name random \
+          #   --num-prompts {{ .Values.benchmark.numPrompts }} \
+          #   --input-len 1024 \
+          #   --output-len 256 \
+          #   --max-model-len 8192 \
+          #   --gpu-memory-utilization 0.85
+      env:
+        - name: MODEL_ID
+          value: {{ .Values.server.modelId | quote }}
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "vllm.fullname" . }}-hf-secret
+              key: {{ .Values.server.hfTokenSecret.key }}
+      ports:
+        - name: http
+          containerPort: {{ .Values.server.service.port }}
+          protocol: TCP
+      resources:
+        limits:
+          {{- with .Values.server.resources.limits }}
+          {{- toYaml . | nindent 10 }}
+          {{- end }}
+          {{ .Values.gpuResource }}: 1
+      volumeMounts:
+        - name: hf-cache
+          mountPath: /root/.cache/huggingface
+  volumes:
+    - name: hf-cache
+      hostPath:
+        path: /data/models/huggingface
+        type: Directory

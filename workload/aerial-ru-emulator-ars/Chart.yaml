@@ -1,0 +1,6 @@
+apiVersion: v2
+appVersion: 24-1
+description: Ariel RU Emulator Helm chart
+name: aerial-ru-emulator-ars
+type: application
+version: 0.20241.0

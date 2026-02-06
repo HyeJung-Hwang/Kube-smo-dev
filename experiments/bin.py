@@ -9,12 +9,21 @@ slot_minutes = 10.0
 delta = 0.1          
 init_config = "31111"
 
-def build_model(jobs, configs, slot_minutes=10.0, delta=0.0, init_config="1111111"):
+def build_model(jobs, configs, slot_minutes=10.0, delta=0.0, init_config="1111111", hp_job_names=None):
+    """
+    hp_job_names: HP job 이름 set (예: {'hp-123', 'hp-456'})
+                  HP jobs는 가능한 빨리 시작하도록 페널티 부여
+    """
     J = list(range(len(jobs)))
     name = {j: jobs[j]["name"] for j in J}
     req  = {j: jobs[j]["size"] for j in J}
     pmin = {j: jobs[j]["duration"]     for j in J}
     d    = {j: int(math.ceil(pmin[j] / slot_minutes)) for j in J}
+
+    # HP job 여부 체크
+    if hp_job_names is None:
+        hp_job_names = set()
+    is_hp = {j: (name[j] in hp_job_names) for j in J}
 
     # 시간 수 T: 보수적 상한 (모든 d 합으로 충분)
     T = sum(d.values())
@@ -80,11 +89,22 @@ def build_model(jobs, configs, slot_minutes=10.0, delta=0.0, init_config="111111
         for t in range(1, T+1):
             m += Tmax >= (t + dj - 1) * s[j, t], f"Tmax_lb_j{j}_t{t}"
 
-    # 목적함수
-    m += slot_minutes * Tmax + delta * pl.lpSum(z[t] for t in range(1, T+1)), "Min_makespan_plus_reconfig"
+    # (7) HP 우선순위: HP jobs는 가능한 빨리 시작하도록 페널티 부여
+    # HP가 slot t에서 시작하면 penalty = hp_weight * t
+    # slot 1에서 시작하면 penalty = hp_weight * 1 (최소)
+    hp_weight = slot_minutes * 10  # makespan보다 높은 가중치로 HP 우선
+    hp_penalty = pl.lpSum(
+        hp_weight * t * s[j, t]
+        for j in J if is_hp[j]
+        for t in range(1, T+1)
+    )
+
+    # 목적함수: makespan + reconfig + HP 시작 지연 페널티
+    m += slot_minutes * Tmax + delta * pl.lpSum(z[t] for t in range(1, T+1)) + hp_penalty, "Min_makespan_reconfig_hp_delay"
 
     data = dict(J=J, name=name, req=req, d=d, T=T, C=C, configs=configs,
-                slot_minutes=slot_minutes, delta=delta, init_config=init_config)
+                slot_minutes=slot_minutes, delta=delta, init_config=init_config,
+                is_hp=is_hp, hp_job_names=hp_job_names)
     vars = dict(y=y, s=s, a=a, z=z, Tmax=Tmax)
     return m, data, vars
 def extract_solution(m, data, vars):
@@ -167,9 +187,9 @@ def add_no_good_cut(m, data, vars, sol):
     N = len(terms)
     m += pl.lpSum(terms) <= N - 1, f"nogood_{len(m.constraints)}"
 
-def solve_k_best(k,  AI_jobs, configs, slot_minutes=10.0, delta=0.1, init_config="1111111"):
+def solve_k_best(k,  AI_jobs, configs, slot_minutes=10.0, delta=0.1, init_config="1111111", hp_job_names=None):
     sols = []
-    m, data, vars = build_model(AI_jobs, configs, slot_minutes, delta, init_config)
+    m, data, vars = build_model(AI_jobs, configs, slot_minutes, delta, init_config, hp_job_names)
     for it in range(k):
         m.solve(pl.PULP_CBC_CMD(msg=False))
         if pl.LpStatus[m.status] != "Optimal":

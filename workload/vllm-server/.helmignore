@@ -1,0 +1,35 @@
+# Patterns to ignore when building packages.
+# This supports shell glob matching, relative path matching, and
+# negation (prefixed with !). Only one pattern per line.
+
+# Test results and data files
+*.csv
+*.png
+*.log
+*.json
+
+# Python files
+*.py
+*.pyc
+__pycache__/
+*.egg-info/
+
+# Git files
+.git/
+.gitignore
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.bak
+.DS_Store
+
+# README and example files
+README.md
+example-*.py

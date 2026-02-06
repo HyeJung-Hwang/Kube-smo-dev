@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vllm-server.fullname" . }}
+  labels:
+    {{- include "vllm-server.labels" . | nindent 4 }}
+spec:
+  # replicas: {{ .Values.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      app: {{ .Values.serviceId }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.serviceId }}
+    spec:
+      nodeName: {{ .Values.nodeName }}
+      restartPolicy: Always
+      containers:
+      - name: vllm-server
+        image: >-
+          {{- if eq .Values.nodeName "skt-6gtb-ars" }}
+          {{ .Values.server.arsImage.repository }}:{{ .Values.server.arsImage.tag }}
+          {{- else }}
+          {{ .Values.server.sysImage.repository }}:{{ .Values.server.sysImage.tag }}
+          {{- end }}
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          echo "Starting vLLM Server Mode for Locust Testing"
+          echo "Model: {{ .Values.server.modelPath }}"
+          echo "Port: {{ .Values.server.port }}"
+
+          vllm serve {{ .Values.server.modelPath }} \
+            --host {{ .Values.server.host }} \
+            --port {{ .Values.server.port }} \
+            --tensor-parallel-size {{ .Values.server.tensorParallelSize }} \
+            --max-model-len {{ .Values.server.maxModelLen }}
+        env:
+        - name: NVIDIA_VISIBLE_DEVICES
+          value: {{ .Values.gpuId }} # 'MIG-f1196f16-8f7a-5654-b55e-82d5913bf428'
+        - name: CUDA_VISIBLE_DEVICES
+          value: '0'
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "vllm-server.fullname" . }}-hf-secret
+              key: {{ .Values.server.hfTokenSecret.key }}
+        ports:
+        - name: http
+          containerPort: {{ .Values.server.port }}
+          protocol: TCP
+        resources:
+          limits:
+            {{- with .Values.server.resources.limits }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{ .Values.gpuResource }}: 1
+          requests:
+            {{- with .Values.server.resources.requests }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+        volumeMounts:
+        - name: hf-cache
+          mountPath: {{ .Values.volumes.hfCache.mountPath }}
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: {{ .Values.server.port }}
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: {{ .Values.server.port }}
+          initialDelaySeconds: 120
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+      volumes:
+      - name: hf-cache
+        hostPath:
+          path: {{ .Values.volumes.hfCache.hostPath }}
+          type: Directory

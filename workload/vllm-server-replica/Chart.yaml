@@ -1,0 +1,6 @@
+apiVersion: v2
+name: vllm-server
+description: vLLM Inference Server for Locust Testing
+type: application
+version: 1.0.0
+appVersion: "0.6.0"
